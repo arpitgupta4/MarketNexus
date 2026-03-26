@@ -1,5 +1,5 @@
 /* * MarketNexus - SaaS Logic Core
- * Handles API fetching, dynamic cross-filtering, deep searching, Pipeline view, Drawer management, and Visual Analytics.
+ * Handles API fetching, dynamic cross-filtering, deep searching, Pipeline view, Drawer management, Visual Analytics, and 3D Engine.
  */
 
 const API_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRqVXr4sXzLjAkI3Y-EranuAYbVJKAmgdEebtnaaUOx1czymzNVf8liZOu4KwJFPDBJYHcKU1MBg0oT/pub?output=csv';
@@ -19,12 +19,12 @@ const STAGE_ORDER = [
 let rawData = [];
 let filteredData = [];
 
-// Chart Instances (Stored globally to destroy/redraw cleanly)
+// Chart Instances
 let sectorChartInstance = null;
 let stageChartInstance = null;
 
 // Hierarchical & Layout State Management
-let currentView = 'stages'; // 'stages' | 'stocks'
+let currentView = 'stages'; 
 let activeStageName = null;
 let activeLayout = 'grid'; // 'grid' | 'pipeline' | 'analytics'
 
@@ -47,16 +47,13 @@ const DOM = {
     resultCount: document.getElementById('resultCount'),
     retryBtn: document.getElementById('retryBtn'),
 
-    // View Controls
     viewControls: document.getElementById('viewControls'),
     viewBtns: document.querySelectorAll('.view-btn'),
 
-    // Breadcrumb Navigation
     breadcrumb: document.getElementById('breadcrumb'),
     backBtn: document.getElementById('backBtn'),
     activeSectorTitle: document.getElementById('activeSectorTitle'),
 
-    // Drawer Details
     drawer: document.getElementById('drawerBackdrop'),
     closeDrawer: document.getElementById('closeDrawer'),
 };
@@ -78,7 +75,7 @@ function fetchData() {
         skipEmptyLines: true,
         complete: function (results) {
             rawData = results.data.filter(item => item['Company Name'] || item['Stock Symbol']);
-            processData(); // This handles dynamic dropdowns & initial render
+            processData(); 
         },
         error: function (err) {
             console.error("Data Pipeline Error:", err);
@@ -99,7 +96,6 @@ function processData() {
     let industryVal = DOM.industry.value;
     let stageVal = DOM.stage.value;
 
-    // Helper to evaluate text search match
     const matchesSearch = (item) => {
         if (searchTerms.length === 0) return true;
         const masterString = [
@@ -112,9 +108,7 @@ function processData() {
         return searchTerms.every(term => masterString.includes(term));
     };
 
-    // ==============================================================
-    // 1. DYNAMIC DROPDOWN CALCULATION (Cascading Cross-Filters)
-    // ==============================================================
+    // 1. Cascading Cross-Filters
     const themes = new Set();
     const sectors = new Set();
     const industries = new Set();
@@ -133,7 +127,6 @@ function processData() {
         const matchInd = industryVal === 'All' || ind === industryVal;
         const matchStg = stageVal === 'All' || stg === stageVal;
 
-        // Populate options based on the OTHER active filters
         if (matchSec && matchInd && matchStg && t) themes.add(t);
         if (matchT && matchInd && matchStg && sec) sectors.add(sec);
         if (matchT && matchSec && matchStg && ind) industries.add(ind);
@@ -150,9 +143,7 @@ function processData() {
     industryVal = DOM.industry.value;
     stageVal = DOM.stage.value;
 
-    // ==============================================================
-    // 2. CORE FILTERING 
-    // ==============================================================
+    // 2. Core Filtering
     filteredData = rawData.filter(item => {
         if (!matchesSearch(item)) return false;
         if (themeVal !== 'All' && String(item['Parent Theme']).trim() !== themeVal) return false;
@@ -162,9 +153,7 @@ function processData() {
         return true;
     });
 
-    // ==============================================================
-    // 3. DATA SORTING
-    // ==============================================================
+    // 3. Sorting
     const sortVal = DOM.sort.value;
     filteredData.sort((a, b) => {
         const rawCapA = String(a['Market Cap (INR)'] || '0').replace(/[^0-9.-]+/g, "");
@@ -182,26 +171,20 @@ function processData() {
         return 0;
     });
 
-    // Auto-reset UI to stage view
     currentView = 'stages';
     activeStageName = null;
 
     renderCurrentView();
 }
 
-/**
- * Populates dropdowns & maintains active selections
- */
 function fillSelect(element, itemsSet, labelPlural, currentVal) {
     element.innerHTML = `<option value="All">All ${labelPlural}</option>`;
-
     Array.from(itemsSet).sort().forEach(item => {
         const opt = document.createElement('option');
         opt.value = item;
         opt.textContent = item;
         element.appendChild(opt);
     });
-
     if (itemsSet.has(currentVal)) {
         element.value = currentVal;
     } else {
@@ -243,44 +226,9 @@ function renderCurrentView() {
             renderStockCards();
         }
     }
-    /**
- * Routing Controller
- */
-    function renderCurrentView() {
-        if (filteredData.length === 0) {
-            setUIState('empty');
-            DOM.resultCount.textContent = "0 entities found";
-            DOM.viewControls.classList.add('hidden');
-            return;
-        }
 
-        setUIState('data');
-        DOM.viewControls.classList.remove('hidden');
-
-        if (activeLayout === 'analytics') {
-            DOM.breadcrumb.classList.add('hidden');
-            renderAnalyticsView();
-        } else if (activeLayout === 'pipeline') {
-            DOM.breadcrumb.classList.add('hidden');
-            renderPipelineView();
-        } else {
-            DOM.pipeline.classList.add('hidden');
-            DOM.analytics.classList.add('hidden');
-            DOM.grid.classList.remove('hidden');
-
-            if (currentView === 'stages') {
-                DOM.breadcrumb.classList.add('hidden');
-                renderStageCards();
-            } else {
-                DOM.breadcrumb.classList.remove('hidden');
-                DOM.activeSectorTitle.textContent = activeStageName;
-                renderStockCards();
-            }
-        }
-
-        // NEW: Re-bind the 3D hover physics to newly generated DOM elements
-        setTimeout(init3DTilt, 100);
-    }
+    // Re-bind the 3D hover physics to newly generated DOM elements
+    setTimeout(init3DTilt, 100);
 }
 
 /**
@@ -302,7 +250,6 @@ function renderStageCards() {
     });
 
     const stageArray = Object.values(stageMap).sort((a, b) => b.totalCap - a.totalCap);
-
     DOM.resultCount.textContent = `Found ${filteredData.length} assets across ${stageArray.length} supply chain stages`;
 
     stageArray.forEach(stg => {
@@ -319,7 +266,6 @@ function renderStageCards() {
                 </div>
                 <h3>${stg.name}</h3>
             </div>
-            
             <div class="sector-stats">
                 <div class="stat-block">
                     <span class="lbl">Total Assets</span>
@@ -374,7 +320,6 @@ function renderStockCards() {
                 </div>
                 ${tagsHTML ? `<div class="card-tags">${tagsHTML}</div>` : ''}
             </div>
-            
             <div class="card-bottom">
                 <div class="card-metric">
                     <span class="metric-lbl">Market Cap</span>
@@ -472,7 +417,6 @@ function renderPipelineView() {
     DOM.pipeline.appendChild(fragment);
 }
 
-// Global hook for inline HTML execution in Pipeline mode
 window.openDrawerFromIndex = function (index) {
     openDrawer(filteredData[index]);
 };
@@ -486,19 +430,18 @@ function renderAnalyticsView() {
     DOM.analytics.classList.remove('hidden');
     DOM.resultCount.textContent = `Visualizing data across ${filteredData.length} assets.`;
 
-    // Setup Custom Dark Theme Defaults
-    Chart.defaults.color = '#94a3b8';
+    // Chart.js Dark Mode Purple Palette Configuration
+    Chart.defaults.color = '#a1a1aa';
     Chart.defaults.font.family = "'Inter', sans-serif";
-    Chart.defaults.plugins.tooltip.backgroundColor = '#1e293b';
-    Chart.defaults.plugins.tooltip.titleColor = '#f8fafc';
+    Chart.defaults.plugins.tooltip.backgroundColor = '#18181b';
+    Chart.defaults.plugins.tooltip.titleColor = '#ffffff';
     Chart.defaults.plugins.tooltip.padding = 12;
     Chart.defaults.plugins.tooltip.cornerRadius = 8;
-    Chart.defaults.plugins.tooltip.borderColor = 'rgba(255,255,255,0.1)';
+    Chart.defaults.plugins.tooltip.borderColor = 'rgba(255,255,255,0.15)';
     Chart.defaults.plugins.tooltip.borderWidth = 1;
 
-    const palette = ['#38bdf8', '#818cf8', '#34d399', '#fbbf24', '#f87171', '#c084fc', '#f472b6', '#2dd4bf'];
+    const palette = ['#a855f7', '#d946ef', '#8b5cf6', '#c084fc', '#e879f9', '#f472b6', '#38bdf8', '#818cf8'];
 
-    // Aggregate Data: Sector Cap
     const sectorMap = {};
     filteredData.forEach(item => {
         const sector = item['Sector'] || 'Unclassified';
@@ -510,7 +453,6 @@ function renderAnalyticsView() {
     const sectorLabels = sortedSectors;
     const sectorData = sortedSectors.map(s => sectorMap[s]);
 
-    // Aggregate Data: Stage Count
     const stageMap = {};
     filteredData.forEach(item => {
         const stage = item['Supply Chain Stage'] || 'Unclassified';
@@ -526,7 +468,6 @@ function renderAnalyticsView() {
     });
     const stageData = stageLabels.map(s => stageMap[s]);
 
-    // Render Chart 1: Doughnut
     const ctxSector = document.getElementById('chartSectorCap').getContext('2d');
     if (sectorChartInstance) sectorChartInstance.destroy();
 
@@ -538,7 +479,7 @@ function renderAnalyticsView() {
                 data: sectorData,
                 backgroundColor: palette,
                 borderWidth: 2,
-                borderColor: '#151e32',
+                borderColor: '#09090b',
                 hoverOffset: 4
             }]
         },
@@ -548,16 +489,11 @@ function renderAnalyticsView() {
             cutout: '65%',
             plugins: {
                 legend: { position: 'right', labels: { boxWidth: 12, usePointStyle: true } },
-                tooltip: {
-                    callbacks: {
-                        label: function (context) { return ' ' + formatINR(context.raw); }
-                    }
-                }
+                tooltip: { callbacks: { label: function (context) { return ' ' + formatINR(context.raw); } } }
             }
         }
     });
 
-    // Render Chart 2: Bar
     const ctxStage = document.getElementById('chartStageCount').getContext('2d');
     if (stageChartInstance) stageChartInstance.destroy();
 
@@ -568,7 +504,7 @@ function renderAnalyticsView() {
             datasets: [{
                 label: 'Number of Companies',
                 data: stageData,
-                backgroundColor: '#38bdf8',
+                backgroundColor: '#a855f7', // Neon Purple
                 borderRadius: 4,
                 barPercentage: 0.6
             }]
@@ -577,22 +513,33 @@ function renderAnalyticsView() {
             responsive: true,
             maintainAspectRatio: false,
             scales: {
-                y: {
-                    beginAtZero: true,
-                    ticks: { precision: 0 },
-                    grid: { color: 'rgba(255,255,255,0.05)' }
-                },
-                x: {
-                    grid: { display: false },
-                    ticks: { maxRotation: 45, minRotation: 45 }
-                }
+                y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                x: { grid: { display: false }, ticks: { maxRotation: 45, minRotation: 45 } }
             },
-            plugins: {
-                legend: { display: false }
-            }
+            plugins: { legend: { display: false } }
         }
     });
 }
+
+window.toggleChart = function (cardId) {
+    const card = document.getElementById(cardId);
+    const btnIcon = card.querySelector('.btn-expand svg');
+
+    if (card.classList.contains('expanded')) {
+        card.classList.remove('expanded');
+        card.style.transform = `perspective(1000px) rotateX(0deg) rotateY(0deg) scale3d(1, 1, 1)`;
+        btnIcon.innerHTML = `<polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line>`;
+    } else {
+        card.classList.add('expanded');
+        card.style.transform = `translate(-50%, -50%) scale(1)`; 
+        btnIcon.innerHTML = `<line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>`;
+    }
+
+    setTimeout(() => {
+        if (sectorChartInstance) sectorChartInstance.resize();
+        if (stageChartInstance) stageChartInstance.resize();
+    }, 300);
+};
 
 // ==========================================
 // Intelligent Drawer Interactivity
@@ -697,7 +644,6 @@ function bindEvents() {
         processData();
     });
 
-    // View Toggles (Grid, Pipeline, Analytics)
     DOM.viewBtns.forEach(btn => {
         btn.addEventListener('click', (e) => {
             DOM.viewBtns.forEach(b => b.classList.remove('active'));
@@ -725,9 +671,6 @@ function bindEvents() {
         if (e.key === 'Escape' && !DOM.drawer.classList.contains('hidden')) closeDrawer();
     });
 }
-// ==========================================
-// 3D Spatial Interactive Engine
-// ==========================================
 
 // ==========================================
 // Enhanced 3D Spatial Engine with Glass Sheen
@@ -747,14 +690,11 @@ function init3DTilt() {
             const centerX = rect.width / 2;
             const centerY = rect.height / 2;
 
-            // 3D Tilt Math
             const rotateX = ((y - centerY) / centerY) * -6;
             const rotateY = ((x - centerX) / centerX) * 6;
 
-            // Apply Tilt
             card.style.transform = `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) scale3d(1.02, 1.02, 1.02)`;
 
-            // Apply Glass Sheen Lighting Coordinates
             card.style.setProperty('--mx', `${x}px`);
             card.style.setProperty('--my', `${y}px`);
         });
@@ -762,7 +702,6 @@ function init3DTilt() {
         card.addEventListener('mouseleave', () => {
             if (card.classList.contains('expanded')) return;
             card.style.transform = `perspective(1000px) rotateX(0deg) rotateY(0deg) scale3d(1, 1, 1)`;
-            // Reset sheen
             card.style.setProperty('--mx', `50%`);
             card.style.setProperty('--my', `50%`);
         });
@@ -779,7 +718,6 @@ function setup() {
     let canvas = createCanvas(windowWidth, windowHeight);
     canvas.parent('p5-canvas-container');
 
-    // Create 80 floating data nodes
     const particleCount = windowWidth < 768 ? 40 : 80;
     for (let i = 0; i < particleCount; i++) {
         particles.push(new Particle());
@@ -787,7 +725,7 @@ function setup() {
 }
 
 function draw() {
-    clear(); // Keeps background transparent so CSS shows through
+    clear(); 
 
     for (let i = 0; i < particles.length; i++) {
         particles[i].update();
@@ -810,11 +748,9 @@ class Particle {
     update() {
         this.pos.add(this.vel);
 
-        // Softly bounce off screen edges
         if (this.pos.x < 0 || this.pos.x > width) this.vel.x *= -1;
         if (this.pos.y < 0 || this.pos.y > height) this.vel.y *= -1;
 
-        // Subtle mouse repulsion effect
         let mouseDist = dist(mouseX, mouseY, this.pos.x, this.pos.y);
         if (mouseDist < 150) {
             let pushVector = createVector(this.pos.x - mouseX, this.pos.y - mouseY);
@@ -825,49 +761,22 @@ class Particle {
 
     display() {
         noStroke();
-        fill('rgba(56, 189, 248, 0.4)'); // Accent blue
+        fill('rgba(168, 85, 247, 0.4)'); // Purple Nodes
         circle(this.pos.x, this.pos.y, this.size);
     }
 
     checkConnections(particles) {
         particles.forEach(particle => {
             const d = dist(this.pos.x, this.pos.y, particle.pos.x, particle.pos.y);
-            // Connect nodes that are close to each other
             if (d < 140) {
-                // Opacity fades out as distance increases
                 const alpha = map(d, 0, 140, 0.15, 0);
-                stroke(`rgba(129, 140, 248, ${alpha})`); // Indigo glow
-                strokeWidth(1);
+                stroke(`rgba(192, 132, 252, ${alpha})`); // Connecting lines
+                strokeWeight(1);
                 line(this.pos.x, this.pos.y, particle.pos.x, particle.pos.y);
             }
         });
     }
 }
-// ==========================================
-// Chart Expansion Logic
-// ==========================================
 
-window.toggleChart = function (cardId) {
-    const card = document.getElementById(cardId);
-    const btnIcon = card.querySelector('.btn-expand svg');
-
-    if (card.classList.contains('expanded')) {
-        // Shrink back
-        card.classList.remove('expanded');
-        card.style.transform = `perspective(1000px) rotateX(0deg) rotateY(0deg) scale3d(1, 1, 1)`;
-        btnIcon.innerHTML = `<polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line>`;
-    } else {
-        // Expand
-        card.classList.add('expanded');
-        card.style.transform = `translate(-50%, -50%) scale(1)`; // Clear 3D tilt
-        btnIcon.innerHTML = `<line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>`; // Change to 'X' icon
-    }
-
-    // Force Chart.js to recalculate its canvas size smoothly
-    setTimeout(() => {
-        if (sectorChartInstance) sectorChartInstance.resize();
-        if (stageChartInstance) stageChartInstance.resize();
-    }, 300); // Wait for CSS transition
-};
 // Spark ignition
 document.addEventListener('DOMContentLoaded', init);
