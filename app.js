@@ -1,782 +1,567 @@
-/* * MarketNexus - SaaS Logic Core
- * Handles API fetching, dynamic cross-filtering, deep searching, Pipeline view, Drawer management, Visual Analytics, and 3D Engine.
+/* * MarketNexus - Value Chain Explorer
+ * Features: Hierarchical Drill-Down, Omni-Search, Dropdown Secondary Filters, 3D Physics.
  */
 
-const API_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRqVXr4sXzLjAkI3Y-EranuAYbVJKAmgdEebtnaaUOx1czymzNVf8liZOu4KwJFPDBJYHcKU1MBg0oT/pub?output=csv';
+const API_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRqVXr4sXzLjAkI3Y-EranuAYbVJKAmgdEebtnaaUOx1czymzNVf8liZOu4KwJFPDBJYHcKU1MBg0oT/pub?gid=236349063&single=true&output=csv';
 
-// Master Sequence for the Supply Chain Pipeline
-const STAGE_ORDER = [
-    "Raw Material Extraction",
-    "Processing & Refining",
-    "Component Manufacturing",
-    "Assembly / OEM",
-    "Software & Integration",
-    "Distribution & Logistics",
-    "Service Provider",
-    "End Consumer"
-];
+const SYNONYMS = {
+    'defence': ['defense', 'military', 'aerospace'],
+    'energy': ['power', 'renewable', 'solar', 'wind'],
+    'ev': ['electric vehicle', 'electric vehicles', 'automotive'],
+    'banking': ['finance', 'financial', 'fintech'],
+    'ai': ['artificial intelligence', 'machine learning', 'ml']
+};
 
-let rawData = [];
-let filteredData = [];
+let tiltScale = 0.9;
 
-// Chart Instances
-let sectorChartInstance = null;
-let stageChartInstance = null;
+// Drill-Down State Machine
+let drillState = {
+    level: 0, // 0: Themes, 1: Stages, 2: Sub-Stages, 3: Stocks
+    theme: null,
+    stage: null,
+    subStage: null
+};
 
-// Hierarchical & Layout State Management
-let currentView = 'stages'; 
-let activeStageName = null;
-let activeLayout = 'grid'; // 'grid' | 'pipeline' | 'analytics'
+class ExplorerEngine {
+    constructor() {
+        this.rawData = [];
+        this.activeFilters = {
+            'Sector': new Set(),
+            'Industry': new Set(),
+            'Asset Type': new Set(),
+            'Customer Type': new Set(),
+            'Geographical Exposure': new Set()
+        };
+    }
 
-// DOM References
+    loadData(data) { this.rawData = data; }
+
+    tokenize(query) {
+        if (!query) return [];
+        return query
+            .toLowerCase()
+            .replace(/[.,;:\/\\]/g, ' ')
+            .split(/\s+/)
+            .filter(t => t);
+    }
+
+    expandTokens(tokens) {
+        const expanded = new Set(tokens);
+        tokens.forEach(tok => {
+            for (const [key, syns] of Object.entries(SYNONYMS)) {
+                if (tok === key || syns.includes(tok)) {
+                    expanded.add(key);
+                    syns.forEach(s => expanded.add(s));
+                }
+            }
+        });
+        return Array.from(expanded);
+    }
+
+    resolveTheme(searchTerm) {
+        if (!searchTerm || !searchTerm.trim()) return null;
+        const tokens = this.expandTokens(this.tokenize(searchTerm));
+        const themeScores = {};
+
+        this.rawData.forEach(item => {
+            const theme = String(item['Parent Theme'] || 'Uncategorized').trim();
+            const tags = String(item['Search Tags / Aliases'] || '').toLowerCase();
+            const combined = `${theme.toLowerCase()} ${tags}`;
+
+            tokens.forEach(token => {
+                if (combined.includes(token)) {
+                    themeScores[theme] = (themeScores[theme] || 0) + (theme.toLowerCase() === token ? 3 : 1);
+                }
+            });
+        });
+
+        const sorted = Object.entries(themeScores).sort((a, b) => b[1] - a[1]);
+        if (sorted.length === 0) return { theme: null, score: 0 };
+        return { theme: sorted[0][0], score: sorted[0][1] };
+    }
+
+    getFilteredData(searchTerm) {
+        let tokens = this.tokenize(searchTerm);
+        if (tokens.length > 0) tokens = this.expandTokens(tokens);
+        const resolved = this.resolveTheme(searchTerm);
+        const bestTheme = resolved ? resolved.theme : null;
+
+        return this.rawData.filter(item => {
+            // 1. Check Sidebar Dropdown Filters
+            for (const [key, activeSet] of Object.entries(this.activeFilters)) {
+                if (activeSet.size > 0) {
+                    const itemVal = this.normalizeFacetValue(item, key);
+                    if (!activeSet.has(itemVal)) return false;
+                }
+            }
+
+            // 2. Check Search Match
+            if (tokens.length > 0) {
+                const theme = String(item['Parent Theme'] || 'Uncategorized').trim();
+                if (bestTheme && theme === bestTheme) return true;
+
+                const searchString = [
+                    item['Company Name'], item['Stock Symbol'], 
+                    item['Search Tags / Aliases'], item['Parent Theme'],
+                    item['Sector'], item['Industry'], item['Supply Chain Stage'], item['Sub-Stage']
+                ].join(" ").toLowerCase();
+
+                const allTokensMatch = tokens.every(token => searchString.includes(token));
+                if (allTokensMatch) return true;
+
+                return tokens.some(token => {
+                    return theme.toLowerCase().includes(token)
+                        || String(item['Search Tags / Aliases'] || '').toLowerCase().includes(token);
+                });
+            }
+            
+            return true;
+        });
+    }
+
+    normalizeFacetValue(item, key) {
+        const raw = String(item[key] || '').trim();
+        return raw === '' ? 'Uncategorized' : raw;
+    }
+
+    calculateFacets(currentResults) {
+        const facets = { 'Sector': {}, 'Industry': {}, 'Asset Type': {}, 'Customer Type': {}, 'Geographical Exposure': {} };
+        currentResults.forEach(item => {
+            for (const category in facets) {
+                const val = this.normalizeFacetValue(item, category);
+                if (val !== 'Uncategorized') facets[category][val] = (facets[category][val] || 0) + 1;
+            }
+        });
+        return facets;
+    }
+}
+
+const Engine = new ExplorerEngine();
+let activeData = [];
+
 const DOM = {
     search: document.getElementById('searchInput'),
     sort: document.getElementById('sortSelect'),
-    theme: document.getElementById('themeSelect'),
-    sector: document.getElementById('sectorSelect'),
-    industry: document.getElementById('industrySelect'),
-    stage: document.getElementById('stageSelect'),
-    resetBtn: document.getElementById('resetFilters'),
-
-    loader: document.getElementById('loader'),
-    errorState: document.getElementById('errorState'),
-    noResults: document.getElementById('noResults'),
     grid: document.getElementById('grid'),
-    pipeline: document.getElementById('pipeline'),
-    analytics: document.getElementById('analytics'),
+    facetsContainer: document.getElementById('facetsContainer'),
     resultCount: document.getElementById('resultCount'),
-    retryBtn: document.getElementById('retryBtn'),
-
-    viewControls: document.getElementById('viewControls'),
-    viewBtns: document.querySelectorAll('.view-btn'),
-
-    breadcrumb: document.getElementById('breadcrumb'),
-    backBtn: document.getElementById('backBtn'),
-    activeSectorTitle: document.getElementById('activeSectorTitle'),
-
+    pageTitle: document.getElementById('pageTitle'),
+    breadcrumbNav: document.getElementById('breadcrumbNav'),
+    sidebarToggle: document.getElementById('sidebarToggle'),
+    sidebar: document.getElementById('sidebar'),
     drawer: document.getElementById('drawerBackdrop'),
-    closeDrawer: document.getElementById('closeDrawer'),
+    loader: document.getElementById('loader'),
+    noResults: document.getElementById('noResults'),
+    brandLogo: document.getElementById('brandLogo')
 };
 
 function init() {
-    bindEvents();
-    fetchData();
-}
-
-/**
- * Executes async API call via PapaParse
- */
-function fetchData() {
-    setUIState('loading');
+    DOM.grid.classList.remove('hidden');
 
     Papa.parse(API_URL, {
-        download: true,
-        header: true,
-        skipEmptyLines: true,
-        complete: function (results) {
-            rawData = results.data.filter(item => item['Company Name'] || item['Stock Symbol']);
-            processData(); 
+        download: true, header: true, skipEmptyLines: true,
+        complete: (res) => {
+            Engine.loadData(res.data.filter(i => i['Company Name']));
+            executePipeline();
+            DOM.loader.classList.add('hidden');
         },
-        error: function (err) {
-            console.error("Data Pipeline Error:", err);
-            setUIState('error');
+        error: () => {
+            DOM.loader.classList.add('hidden');
+            DOM.noResults.classList.remove('hidden');
+            DOM.noResults.querySelector('h2').textContent = 'Failed to load data';
+            DOM.noResults.querySelector('p').textContent = 'Please check your network or CSV sheet URL.';
         }
     });
-}
 
-/**
- * Multi-layer logic: Dynamic Cross-Filtering, Deep Search, and Sorting
- */
-function processData() {
-    const q = DOM.search.value.toLowerCase().trim();
-    const searchTerms = q.split(' ').filter(t => t !== '');
-
-    let themeVal = DOM.theme.value;
-    let sectorVal = DOM.sector.value;
-    let industryVal = DOM.industry.value;
-    let stageVal = DOM.stage.value;
-
-    const matchesSearch = (item) => {
-        if (searchTerms.length === 0) return true;
-        const masterString = [
-            String(item['Search Tags / Aliases'] || ""),
-            String(item['Specific Products'] || ""),
-            String(item['Specific Services'] || ""),
-            String(item['Company Name'] || ""),
-            String(item['Stock Symbol'] || "")
-        ].join(" ").toLowerCase();
-        return searchTerms.every(term => masterString.includes(term));
-    };
-
-    // 1. Cascading Cross-Filters
-    const themes = new Set();
-    const sectors = new Set();
-    const industries = new Set();
-    const stages = new Set();
-
-    rawData.forEach(item => {
-        if (!matchesSearch(item)) return;
-
-        const t = item['Parent Theme'] ? String(item['Parent Theme']).trim() : '';
-        const sec = item['Sector'] ? String(item['Sector']).trim() : '';
-        const ind = item['Industry'] ? String(item['Industry']).trim() : '';
-        const stg = item['Supply Chain Stage'] ? String(item['Supply Chain Stage']).trim() : '';
-
-        const matchT = themeVal === 'All' || t === themeVal;
-        const matchSec = sectorVal === 'All' || sec === sectorVal;
-        const matchInd = industryVal === 'All' || ind === industryVal;
-        const matchStg = stageVal === 'All' || stg === stageVal;
-
-        if (matchSec && matchInd && matchStg && t) themes.add(t);
-        if (matchT && matchInd && matchStg && sec) sectors.add(sec);
-        if (matchT && matchSec && matchStg && ind) industries.add(ind);
-        if (matchT && matchSec && matchInd && stg) stages.add(stg);
-    });
-
-    fillSelect(DOM.theme, themes, "Themes", themeVal);
-    fillSelect(DOM.sector, sectors, "Sectors", sectorVal);
-    fillSelect(DOM.industry, industries, "Industries", industryVal);
-    fillSelect(DOM.stage, stages, "Stages", stageVal);
-
-    themeVal = DOM.theme.value;
-    sectorVal = DOM.sector.value;
-    industryVal = DOM.industry.value;
-    stageVal = DOM.stage.value;
-
-    // 2. Core Filtering
-    filteredData = rawData.filter(item => {
-        if (!matchesSearch(item)) return false;
-        if (themeVal !== 'All' && String(item['Parent Theme']).trim() !== themeVal) return false;
-        if (sectorVal !== 'All' && String(item['Sector']).trim() !== sectorVal) return false;
-        if (industryVal !== 'All' && String(item['Industry']).trim() !== industryVal) return false;
-        if (stageVal !== 'All' && String(item['Supply Chain Stage']).trim() !== stageVal) return false;
-        return true;
-    });
-
-    // 3. Sorting
-    const sortVal = DOM.sort.value;
-    filteredData.sort((a, b) => {
-        const rawCapA = String(a['Market Cap (INR)'] || '0').replace(/[^0-9.-]+/g, "");
-        const rawCapB = String(b['Market Cap (INR)'] || '0').replace(/[^0-9.-]+/g, "");
-        const capA = Number(rawCapA) || 0;
-        const capB = Number(rawCapB) || 0;
-
-        const nameA = String(a['Company Name'] || "");
-        const nameB = String(b['Company Name'] || "");
-
-        if (sortVal === 'cap-desc') return capB - capA;
-        if (sortVal === 'cap-asc') return capA - capB;
-        if (sortVal === 'name-asc') return nameA.localeCompare(nameB);
-        if (sortVal === 'name-desc') return nameB.localeCompare(nameA);
-        return 0;
-    });
-
-    currentView = 'stages';
-    activeStageName = null;
-
-    renderCurrentView();
-}
-
-function fillSelect(element, itemsSet, labelPlural, currentVal) {
-    element.innerHTML = `<option value="All">All ${labelPlural}</option>`;
-    Array.from(itemsSet).sort().forEach(item => {
-        const opt = document.createElement('option');
-        opt.value = item;
-        opt.textContent = item;
-        element.appendChild(opt);
-    });
-    if (itemsSet.has(currentVal)) {
-        element.value = currentVal;
-    } else {
-        element.value = 'All';
-    }
-}
-
-/**
- * Routing Controller
- */
-function renderCurrentView() {
-    if (filteredData.length === 0) {
-        setUIState('empty');
-        DOM.resultCount.textContent = "0 entities found";
-        DOM.viewControls.classList.add('hidden');
-        return;
-    }
-
-    setUIState('data');
-    DOM.viewControls.classList.remove('hidden');
-
-    if (activeLayout === 'analytics') {
-        DOM.breadcrumb.classList.add('hidden');
-        renderAnalyticsView();
-    } else if (activeLayout === 'pipeline') {
-        DOM.breadcrumb.classList.add('hidden');
-        renderPipelineView();
-    } else {
-        DOM.pipeline.classList.add('hidden');
-        DOM.analytics.classList.add('hidden');
-        DOM.grid.classList.remove('hidden');
-
-        if (currentView === 'stages') {
-            DOM.breadcrumb.classList.add('hidden');
-            renderStageCards();
-        } else {
-            DOM.breadcrumb.classList.remove('hidden');
-            DOM.activeSectorTitle.textContent = activeStageName;
-            renderStockCards();
+    DOM.search.addEventListener('input', () => {
+        if (DOM.search.value.trim().length > 0 && drillState.level > 0) {
+            drillState = { level: 0, theme: null, stage: null, subStage: null };
         }
+        executePipeline();
+    });
+    
+    DOM.sort.addEventListener('change', () => executePipeline());
+    
+    document.getElementById('resetFilters').addEventListener('click', resetAllFeatures);
+    DOM.brandLogo.addEventListener('click', resetAllFeatures);
+
+    DOM.sidebarToggle.addEventListener('click', () => DOM.sidebar.classList.toggle('collapsed'));
+    document.getElementById('closeDrawer').addEventListener('click', () => DOM.drawer.classList.add('hidden'));
+
+    const exportBtn = document.getElementById('exportCSV');
+    if (exportBtn) exportBtn.addEventListener('click', exportCurrentCSV);
+
+    const effectSlider = document.getElementById('effectStrength');
+    if (effectSlider) effectSlider.addEventListener('input', (e) => { tiltScale = Number(e.target.value || 0.9); });
+}
+
+function resetAllFeatures() {
+    Object.keys(Engine.activeFilters).forEach(k => Engine.activeFilters[k].clear());
+    DOM.search.value = '';
+    DOM.sort.value = 'cap-desc';
+    drillState = { level: 0, theme: null, stage: null, subStage: null };
+    executePipeline();
+}
+
+function executePipeline() {
+    const searchValue = DOM.search.value.trim();
+    const resolved = Engine.resolveTheme(searchValue);
+
+    activeData = Engine.getFilteredData(searchValue);
+
+    const threshold = 5;
+    if (searchValue && resolved && resolved.theme && resolved.score >= threshold && drillState.level === 0) {
+        drillState = { level: 1, theme: resolved.theme, stage: null, subStage: null };
+    } else if (!searchValue) {
+        drillState = { level: 0, theme: null, stage: null, subStage: null };
     }
 
-    // Re-bind the 3D hover physics to newly generated DOM elements
-    setTimeout(init3DTilt, 100);
+    // FIX: Hide 'noResults' if length > 0, show if 0.
+    DOM.noResults.classList.toggle('hidden', activeData.length > 0);
+    
+    renderSidebar(Engine.calculateFacets(activeData));
+    renderDrillDownView();
 }
 
-/**
- * Render Stage Folders (Grid Mode)
- */
-function renderStageCards() {
-    DOM.grid.innerHTML = '';
-    const fragment = document.createDocumentFragment();
+// ======== SIDEBAR (DROPDOWNS) ========
+function renderSidebar(facets) {
+    DOM.facetsContainer.innerHTML = '';
+    for (const [category, counts] of Object.entries(facets)) {
+        if (Object.keys(counts).length === 0) continue;
+        
+        const sec = document.createElement('div');
+        sec.className = 'filter-group';
+        
+        const currentSet = Engine.activeFilters[category];
+        const currentVal = currentSet.size > 0 ? Array.from(currentSet)[0] : 'All';
 
-    const stageMap = {};
-    filteredData.forEach(item => {
-        const stage = item['Supply Chain Stage'] || 'Unclassified Stage';
-        if (!stageMap[stage]) {
-            stageMap[stage] = { name: stage, count: 0, totalCap: 0 };
-        }
-        stageMap[stage].count += 1;
-        const cap = Number(String(item['Market Cap (INR)'] || '0').replace(/[^0-9.-]+/g, "")) || 0;
-        stageMap[stage].totalCap += cap;
-    });
-
-    const stageArray = Object.values(stageMap).sort((a, b) => b.totalCap - a.totalCap);
-    DOM.resultCount.textContent = `Found ${filteredData.length} assets across ${stageArray.length} supply chain stages`;
-
-    stageArray.forEach(stg => {
-        const card = document.createElement('div');
-        card.className = 'sector-card';
-
-        card.innerHTML = `
-            <div>
-                <div class="sector-icon-wrap">
-                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path>
-                        <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path>
-                    </svg>
-                </div>
-                <h3>${stg.name}</h3>
-            </div>
-            <div class="sector-stats">
-                <div class="stat-block">
-                    <span class="lbl">Total Assets</span>
-                    <span class="val">${stg.count}</span>
-                </div>
-                <div class="stat-block">
-                    <span class="lbl">Combined Cap</span>
-                    <span class="val">${formatINR(stg.totalCap)}</span>
-                </div>
-            </div>
-        `;
-
-        card.addEventListener('click', () => {
-            currentView = 'stocks';
-            activeStageName = stg.name;
-            renderCurrentView();
+        let optionsHTML = `<option value="All">All ${category}s</option>`;
+        
+        Object.entries(counts).sort((a,b) => b[1]-a[1]).forEach(([val, count]) => {
+            const isSelected = val === currentVal ? 'selected' : '';
+            optionsHTML += `<option value="${val}" ${isSelected}>${val} (${count})</option>`;
         });
 
-        fragment.appendChild(card);
-    });
-
-    DOM.grid.appendChild(fragment);
-}
-
-/**
- * Render Stock Cards inside a Stage (Grid Mode)
- */
-function renderStockCards() {
-    DOM.grid.innerHTML = '';
-    const fragment = document.createDocumentFragment();
-
-    const stageStocks = filteredData.filter(item => (item['Supply Chain Stage'] || 'Unclassified Stage') === activeStageName);
-    DOM.resultCount.textContent = `Viewing ${stageStocks.length} assets in ${activeStageName}`;
-
-    stageStocks.forEach(item => {
-        const card = document.createElement('div');
-        card.className = 'card';
-
-        const symbol = item['Stock Symbol'] || 'N/A';
-        const name = item['Company Name'] || 'Unknown Entity';
-        const capFormat = formatINR(item['Market Cap (INR)']);
-        const sector = item['Sector'] || '';
-
-        let tagsHTML = '';
-        if (sector) tagsHTML += `<span class="minimal-tag">${sector}</span>`;
-
-        card.innerHTML = `
-            <div class="card-top">
-                <div class="card-header-main">
-                    <h3 class="card-title" title="${name}">${name}</h3>
-                    <span class="card-ticker">${symbol}</span>
-                </div>
-                ${tagsHTML ? `<div class="card-tags">${tagsHTML}</div>` : ''}
-            </div>
-            <div class="card-bottom">
-                <div class="card-metric">
-                    <span class="metric-lbl">Market Cap</span>
-                    <span class="metric-val">${capFormat}</span>
-                </div>
-                <button class="btn-minimal" aria-label="Deep dive into ${name}">
-                    Deep Dive
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <line x1="5" y1="12" x2="19" y2="12"></line>
-                        <polyline points="12 5 19 12 12 19"></polyline>
-                    </svg>
-                </button>
-            </div>
+        sec.innerHTML = `
+            <label>${category}</label>
+            <select class="dropdown dynamic-select" data-cat="${category}">
+                ${optionsHTML}
+            </select>
         `;
+        DOM.facetsContainer.appendChild(sec);
+    }
 
-        card.querySelector('.btn-minimal').addEventListener('click', () => openDrawer(item));
-        fragment.appendChild(card);
-    });
-
-    DOM.grid.appendChild(fragment);
-}
-
-/**
- * Render Chronological Value Chain (Pipeline Mode)
- */
-function renderPipelineView() {
-    DOM.grid.classList.add('hidden');
-    DOM.analytics.classList.add('hidden');
-    DOM.pipeline.classList.remove('hidden');
-    DOM.pipeline.innerHTML = '';
-
-    const pipelineMap = {};
-    filteredData.forEach(item => {
-        const stage = item['Supply Chain Stage'] || 'Uncategorized';
-        if (!pipelineMap[stage]) pipelineMap[stage] = [];
-        pipelineMap[stage].push(item);
-    });
-
-    const discoveredStages = Object.keys(pipelineMap);
-    discoveredStages.sort((a, b) => {
-        let indexA = STAGE_ORDER.indexOf(a);
-        let indexB = STAGE_ORDER.indexOf(b);
-        if (indexA === -1) indexA = 999;
-        if (indexB === -1) indexB = 999;
-        return indexA - indexB;
-    });
-
-    DOM.resultCount.textContent = `Mapping ${filteredData.length} assets across the value chain.`;
-    const fragment = document.createDocumentFragment();
-
-    discoveredStages.forEach((stageName, index) => {
-        const items = pipelineMap[stageName];
-
-        items.sort((a, b) => {
-            const capA = Number(String(a['Market Cap (INR)'] || '0').replace(/[^0-9.-]+/g, "")) || 0;
-            const capB = Number(String(b['Market Cap (INR)'] || '0').replace(/[^0-9.-]+/g, "")) || 0;
-            return capB - capA;
-        });
-
-        const column = document.createElement('div');
-        column.className = 'pipeline-stage';
-        column.style.animationDelay = `${index * 0.1}s`;
-
-        let cardsHTML = '';
-        items.forEach(item => {
-            const symbol = item['Stock Symbol'] || 'N/A';
-            const name = item['Company Name'] || 'Unknown Entity';
-            const capFormat = formatINR(item['Market Cap (INR)']);
-            const dataIndex = filteredData.indexOf(item);
-
-            cardsHTML += `
-                <div class="pipe-card" onclick="openDrawerFromIndex(${dataIndex})">
-                    <div class="pipe-top">
-                        <span class="pipe-title">${name}</span>
-                        <span class="pipe-ticker">${symbol}</span>
-                    </div>
-                    <span class="pipe-cap">${capFormat}</span>
-                </div>
-            `;
-        });
-
-        column.innerHTML = `
-            <div class="stage-header">
-                <h3>${stageName}</h3>
-                <span class="stage-count">${items.length}</span>
-            </div>
-            <div class="pipeline-cards">
-                ${cardsHTML}
-            </div>
-        `;
-
-        fragment.appendChild(column);
-    });
-
-    DOM.pipeline.appendChild(fragment);
-}
-
-window.openDrawerFromIndex = function (index) {
-    openDrawer(filteredData[index]);
-};
-
-/**
- * Render Visual Analytics Dashboard (Analytics Mode)
- */
-function renderAnalyticsView() {
-    DOM.grid.classList.add('hidden');
-    DOM.pipeline.classList.add('hidden');
-    DOM.analytics.classList.remove('hidden');
-    DOM.resultCount.textContent = `Visualizing data across ${filteredData.length} assets.`;
-
-    // Chart.js Dark Mode Purple Palette Configuration
-    Chart.defaults.color = '#a1a1aa';
-    Chart.defaults.font.family = "'Inter', sans-serif";
-    Chart.defaults.plugins.tooltip.backgroundColor = '#18181b';
-    Chart.defaults.plugins.tooltip.titleColor = '#ffffff';
-    Chart.defaults.plugins.tooltip.padding = 12;
-    Chart.defaults.plugins.tooltip.cornerRadius = 8;
-    Chart.defaults.plugins.tooltip.borderColor = 'rgba(255,255,255,0.15)';
-    Chart.defaults.plugins.tooltip.borderWidth = 1;
-
-    const palette = ['#a855f7', '#d946ef', '#8b5cf6', '#c084fc', '#e879f9', '#f472b6', '#38bdf8', '#818cf8'];
-
-    const sectorMap = {};
-    filteredData.forEach(item => {
-        const sector = item['Sector'] || 'Unclassified';
-        const cap = Number(String(item['Market Cap (INR)'] || '0').replace(/[^0-9.-]+/g, "")) || 0;
-        sectorMap[sector] = (sectorMap[sector] || 0) + cap;
-    });
-
-    const sortedSectors = Object.keys(sectorMap).sort((a, b) => sectorMap[b] - sectorMap[a]);
-    const sectorLabels = sortedSectors;
-    const sectorData = sortedSectors.map(s => sectorMap[s]);
-
-    const stageMap = {};
-    filteredData.forEach(item => {
-        const stage = item['Supply Chain Stage'] || 'Unclassified';
-        stageMap[stage] = (stageMap[stage] || 0) + 1;
-    });
-
-    const stageLabels = Object.keys(stageMap).sort((a, b) => {
-        let indexA = STAGE_ORDER.indexOf(a);
-        let indexB = STAGE_ORDER.indexOf(b);
-        if (indexA === -1) indexA = 999;
-        if (indexB === -1) indexB = 999;
-        return indexA - indexB;
-    });
-    const stageData = stageLabels.map(s => stageMap[s]);
-
-    const ctxSector = document.getElementById('chartSectorCap').getContext('2d');
-    if (sectorChartInstance) sectorChartInstance.destroy();
-
-    sectorChartInstance = new Chart(ctxSector, {
-        type: 'doughnut',
-        data: {
-            labels: sectorLabels,
-            datasets: [{
-                data: sectorData,
-                backgroundColor: palette,
-                borderWidth: 2,
-                borderColor: '#09090b',
-                hoverOffset: 4
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            cutout: '65%',
-            plugins: {
-                legend: { position: 'right', labels: { boxWidth: 12, usePointStyle: true } },
-                tooltip: { callbacks: { label: function (context) { return ' ' + formatINR(context.raw); } } }
+    DOM.facetsContainer.querySelectorAll('.dynamic-select').forEach(select => {
+        select.addEventListener('change', (e) => {
+            const cat = e.target.dataset.cat;
+            const val = e.target.value;
+            Engine.activeFilters[cat].clear();
+            if (val !== 'All') {
+                Engine.activeFilters[cat].add(val);
             }
-        }
-    });
-
-    const ctxStage = document.getElementById('chartStageCount').getContext('2d');
-    if (stageChartInstance) stageChartInstance.destroy();
-
-    stageChartInstance = new Chart(ctxStage, {
-        type: 'bar',
-        data: {
-            labels: stageLabels,
-            datasets: [{
-                label: 'Number of Companies',
-                data: stageData,
-                backgroundColor: '#a855f7', // Neon Purple
-                borderRadius: 4,
-                barPercentage: 0.6
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            scales: {
-                y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: 'rgba(255,255,255,0.05)' } },
-                x: { grid: { display: false }, ticks: { maxRotation: 45, minRotation: 45 } }
-            },
-            plugins: { legend: { display: false } }
-        }
-    });
-}
-
-window.toggleChart = function (cardId) {
-    const card = document.getElementById(cardId);
-    const btnIcon = card.querySelector('.btn-expand svg');
-
-    if (card.classList.contains('expanded')) {
-        card.classList.remove('expanded');
-        card.style.transform = `perspective(1000px) rotateX(0deg) rotateY(0deg) scale3d(1, 1, 1)`;
-        btnIcon.innerHTML = `<polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line>`;
-    } else {
-        card.classList.add('expanded');
-        card.style.transform = `translate(-50%, -50%) scale(1)`; 
-        btnIcon.innerHTML = `<line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>`;
-    }
-
-    setTimeout(() => {
-        if (sectorChartInstance) sectorChartInstance.resize();
-        if (stageChartInstance) stageChartInstance.resize();
-    }, 300);
-};
-
-// ==========================================
-// Intelligent Drawer Interactivity
-// ==========================================
-
-function createSmartList(rawString, fallbackText) {
-    if (!rawString || String(rawString).trim() === '') {
-        return `<p class="empty-read">${fallbackText}</p>`;
-    }
-    const items = String(rawString).split(',').map(i => i.trim()).filter(i => i !== '');
-    if (items.length === 0) return `<p class="empty-read">${fallbackText}</p>`;
-    return `<ul class="smart-list">${items.map(i => `<li>${i}</li>`).join('')}</ul>`;
-}
-
-function openDrawer(item) {
-    document.getElementById('drawerSymbol').textContent = item['Stock Symbol'] || 'N/A';
-    document.getElementById('drawerName').textContent = item['Company Name'] || 'Unknown Entity';
-    document.getElementById('drawerCap').textContent = formatINR(item['Market Cap (INR)']);
-
-    document.getElementById('drawerSector').textContent = item['Sector'] || 'Unclassified';
-    document.getElementById('drawerIndustry').textContent = item['Industry'] || 'Unclassified';
-    document.getElementById('drawerStage').textContent = item['Supply Chain Stage'] || 'Unclassified';
-
-    document.getElementById('drawerProducts').innerHTML = createSmartList(item['Specific Products'], 'No specific individual products catalogued.');
-    document.getElementById('drawerServices').innerHTML = createSmartList(item['Specific Services'], 'No specific individual services catalogued.');
-
-    const capText = item['Operational Capacity'] || '';
-    document.getElementById('drawerCapacity').textContent = capText.trim() ? capText : 'Operational constraints undocumented at this time.';
-    document.getElementById('drawerCapacity').className = capText.trim() ? 'prose-text' : 'empty-read';
-
-    const tagsDiv = document.getElementById('drawerTags');
-    tagsDiv.innerHTML = '';
-    const tagsRaw = item['Search Tags / Aliases'] || "";
-
-    if (tagsRaw.trim()) {
-        String(tagsRaw).split(',').forEach(t => {
-            if (!t.trim()) return;
-            const span = document.createElement('span');
-            span.className = 'tag-pill';
-            span.textContent = t.trim();
-            tagsDiv.appendChild(span);
+            executePipeline();
         });
-    } else {
-        tagsDiv.innerHTML = '<span class="empty-read">No search aliases bound to this entity.</span>';
-    }
-
-    document.body.style.overflow = 'hidden';
-    DOM.drawer.classList.remove('hidden');
+    });
 }
 
-function closeDrawer() {
-    document.body.style.overflow = '';
-    DOM.drawer.classList.add('hidden');
-}
+function exportCurrentCSV() {
+    if (!activeData || activeData.length === 0) return;
+    const fields = ['Stock Symbol','Company Name','Parent Theme','Supply Chain Stage','Sub-Stage','Business Model','Value Chain Direction','Asset Type','Geographical Exposure','Customer Type','Revenue Dependency Mapping (%)','Search Tags / Aliases','Sector','Industry','Specific Products','Specific Services','Operational Capacity','Market Cap (INR)'];
+    const csvRows = [fields.join(',')];
 
-// ==========================================
-// Formatting & Core Event Binding
-// ==========================================
+    activeData.forEach(item => {
+        const row = fields.map(f => `"${String(item[f] || '').replace(/"/g, '""')}"`).join(',');
+        csvRows.push(row);
+    });
+
+    const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `MarketNexus_${new Date().toISOString().slice(0,10)}.csv`;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
 
 function formatINR(number) {
-    if (number === null || number === undefined || String(number).trim() === '') return 'N/A';
-    const val = Number(String(number).replace(/[^0-9.-]+/g, ""));
-    if (isNaN(val) || val === 0) return 'N/A';
-
+    const val = Number(String(number || "0").replace(/[^0-9.-]+/g, ""));
+    if (!val) return 'N/A';
     if (val >= 10000000) return `₹ ${(val / 10000000).toLocaleString('en-IN', { maximumFractionDigits: 2 })} Cr`;
-    if (val >= 100000) return `₹ ${(val / 100000).toLocaleString('en-IN', { maximumFractionDigits: 2 })} L`;
     return `₹ ${val.toLocaleString('en-IN')}`;
 }
 
-function setUIState(state) {
-    DOM.loader.classList.add('hidden');
-    DOM.errorState.classList.add('hidden');
-    DOM.noResults.classList.add('hidden');
-    DOM.grid.classList.add('hidden');
-    DOM.pipeline.classList.add('hidden');
-    if (DOM.analytics) DOM.analytics.classList.add('hidden');
+// ======== DRILL-DOWN ROUTER ========
+function renderDrillDownView() {
+    DOM.grid.classList.remove('hidden');
+    renderBreadcrumbs();
 
-    if (state === 'loading') DOM.loader.classList.remove('hidden');
-    if (state === 'error') DOM.errorState.classList.remove('hidden');
-    if (state === 'empty') DOM.noResults.classList.remove('hidden');
+    if (drillState.level === 0) renderLevel0_Themes();
+    else if (drillState.level === 1) renderLevel1_Stages();
+    else if (drillState.level === 2) renderLevel2_SubStages();
+    else if (drillState.level === 3) renderLevel3_Stocks();
+    
+    setTimeout(init3DTilt, 100);
 }
 
-function bindEvents() {
-    let debounceTimer;
+function renderBreadcrumbs() {
+    let html = `<span class="crumb ${drillState.level === 0 ? 'active' : ''}" onclick="goToLevel(0)">Market Universe</span>`;
+    if (drillState.level >= 1) html += `<span class="crumb ${drillState.level === 1 ? 'active' : ''}" onclick="goToLevel(1)">${drillState.theme}</span>`;
+    if (drillState.level >= 2) html += `<span class="crumb ${drillState.level === 2 ? 'active' : ''}" onclick="goToLevel(2)">${drillState.stage}</span>`;
+    if (drillState.level === 3) html += `<span class="crumb active">${drillState.subStage}</span>`;
+    DOM.breadcrumbNav.innerHTML = html;
+}
 
-    DOM.search.addEventListener('input', () => {
-        clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(processData, 250);
+window.goToLevel = function(level) {
+    drillState.level = level;
+    if(level < 3) drillState.subStage = null;
+    if(level < 2) drillState.stage = null;
+    if(level < 1) drillState.theme = null;
+    renderDrillDownView();
+}
+
+// LEVEL 0: THEMES
+function renderLevel0_Themes() {
+    DOM.pageTitle.textContent = "Explore by Theme";
+    
+    const grouped = {};
+    activeData.forEach(item => {
+        const key = item['Parent Theme'] || 'Uncategorized';
+        if (!grouped[key]) grouped[key] = { count: 0, cap: 0 };
+        grouped[key].count++;
+        grouped[key].cap += (Number(String(item['Market Cap (INR)']||0).replace(/[^0-9.-]+/g,""))||0);
     });
 
-    [DOM.sort, DOM.theme, DOM.sector, DOM.industry, DOM.stage].forEach(el => {
-        el.addEventListener('change', processData);
+    DOM.resultCount.textContent = `${Object.keys(grouped).length} Themes matching criteria.`;
+    
+    DOM.grid.innerHTML = Object.entries(grouped).sort((a,b) => b[1].cap - a[1].cap).map(([key, data], idx) => `
+        <div class="node-card" data-theme="${encodeURIComponent(key)}" style="animation-delay: ${idx * 0.05}s">
+            <h3 class="node-title">${key}</h3>
+            <div class="node-stats">
+                <div class="n-stat"><span class="n-lbl">Entities</span><span class="n-val">${data.count}</span></div>
+                <div class="n-stat"><span class="n-lbl">Total Value</span><span class="n-val highlight">${formatINR(data.cap)}</span></div>
+            </div>
+        </div>
+    `).join('');
+
+    DOM.grid.querySelectorAll('.node-card').forEach(card => {
+        card.addEventListener('click', () => drillDown(1, decodeURIComponent(card.dataset.theme)));
+    });
+}
+
+// LEVEL 1: STAGES
+function renderLevel1_Stages() {
+    DOM.pageTitle.textContent = "Supply Chain Stages";
+    
+    const subset = activeData.filter(i => (i['Parent Theme'] || 'Uncategorized') === drillState.theme);
+    const grouped = {};
+    subset.forEach(item => {
+        const key = item['Supply Chain Stage'] || 'Uncategorized';
+        if (!grouped[key]) grouped[key] = { count: 0, cap: 0 };
+        grouped[key].count++;
+        grouped[key].cap += (Number(String(item['Market Cap (INR)']||0).replace(/[^0-9.-]+/g,""))||0);
     });
 
-    DOM.resetBtn.addEventListener('click', () => {
-        DOM.search.value = '';
-        DOM.sort.value = 'cap-desc';
-        DOM.theme.value = 'All';
-        DOM.sector.value = 'All';
-        DOM.industry.value = 'All';
-        DOM.stage.value = 'All';
-        processData();
+    DOM.resultCount.textContent = `Analyzing ${subset.length} assets across ${Object.keys(grouped).length} stages in ${drillState.theme}.`;
+
+    DOM.grid.innerHTML = Object.entries(grouped).sort((a,b) => b[1].cap - a[1].cap).map(([key, data], idx) => `
+        <div class="node-card" data-stage="${encodeURIComponent(key)}" style="animation-delay: ${idx * 0.05}s">
+            <h3 class="node-title">${key}</h3>
+            <div class="node-stats">
+                <div class="n-stat"><span class="n-lbl">Entities</span><span class="n-val">${data.count}</span></div>
+                <div class="n-stat"><span class="n-lbl">Total Value</span><span class="n-val highlight">${formatINR(data.cap)}</span></div>
+            </div>
+        </div>
+    `).join('');
+
+    DOM.grid.querySelectorAll('.node-card').forEach(card => {
+        card.addEventListener('click', () => drillDown(2, decodeURIComponent(card.dataset.stage)));
+    });
+}
+
+// LEVEL 2: SUB-STAGES
+function renderLevel2_SubStages() {
+    DOM.pageTitle.textContent = "Sub-Stage Analysis";
+    
+    const subset = activeData.filter(i => (i['Parent Theme'] || 'Uncategorized') === drillState.theme && (i['Supply Chain Stage'] || 'Uncategorized') === drillState.stage);
+    const grouped = {};
+    subset.forEach(item => {
+        const key = item['Sub-Stage'] || 'Core Processing';
+        if (!grouped[key]) grouped[key] = { count: 0, cap: 0 };
+        grouped[key].count++;
+        grouped[key].cap += (Number(String(item['Market Cap (INR)']||0).replace(/[^0-9.-]+/g,""))||0);
     });
 
-    DOM.viewBtns.forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            DOM.viewBtns.forEach(b => b.classList.remove('active'));
-            e.currentTarget.classList.add('active');
-            activeLayout = e.currentTarget.getAttribute('data-view');
-            renderCurrentView();
+    DOM.resultCount.textContent = `Analyzing ${subset.length} assets in ${drillState.stage}.`;
+
+    DOM.grid.innerHTML = Object.entries(grouped).sort((a,b) => b[1].cap - a[1].cap).map(([key, data], idx) => `
+        <div class="node-card" data-substage="${encodeURIComponent(key)}" style="animation-delay: ${idx * 0.05}s">
+            <h3 class="node-title">${key}</h3>
+            <div class="node-stats">
+                <div class="n-stat"><span class="n-lbl">Entities</span><span class="n-val">${data.count}</span></div>
+                <div class="n-stat"><span class="n-lbl">Total Value</span><span class="n-val highlight">${formatINR(data.cap)}</span></div>
+            </div>
+        </div>
+    `).join('');
+
+    DOM.grid.querySelectorAll('.node-card').forEach(card => {
+        card.addEventListener('click', () => drillDown(3, decodeURIComponent(card.dataset.substage)));
+    });
+}
+
+// LEVEL 3: STOCKS
+function renderLevel3_Stocks() {
+    DOM.pageTitle.textContent = "Identified Equities";
+    
+    let subset = activeData.filter(i => 
+        (i['Parent Theme'] || 'Uncategorized') === drillState.theme && 
+        (i['Supply Chain Stage'] || 'Uncategorized') === drillState.stage &&
+        (i['Sub-Stage'] || 'Core Processing') === drillState.subStage
+    );
+
+    // Apply Sorting
+    const sortVal = DOM.sort.value;
+    subset.sort((a, b) => {
+        const capA = Number(String(a['Market Cap (INR)'] || '0').replace(/[^0-9.-]+/g, "")) || 0;
+        const capB = Number(String(b['Market Cap (INR)'] || '0').replace(/[^0-9.-]+/g, "")) || 0;
+        if (sortVal === 'cap-desc' || sortVal === 'relevance') return capB - capA;
+        if (sortVal === 'cap-asc') return capA - capB;
+        if (sortVal === 'name-asc') return String(a['Company Name']).localeCompare(String(b['Company Name']));
+        return 0;
+    });
+
+    DOM.resultCount.textContent = `Showing ${subset.length} companies operating in ${drillState.subStage}.`;
+
+    DOM.grid.innerHTML = subset.map((item, idx) => {
+        let tag = item['Specific Products'] || item['Specific Services'] || 'Diversified Operations';
+        if(tag.length > 70) tag = tag.substring(0, 70) + '...';
+        
+        return `
+        <div class="stock-card" data-symbol="${encodeURIComponent(item['Stock Symbol'] || '')}" style="animation-delay: ${idx * 0.03}s">
+            <div class="stock-header">
+                <div class="stock-title">${item['Company Name']}</div>
+                <div class="stock-ticker">${item['Stock Symbol'] || 'N/A'}</div>
+            </div>
+            <div class="stock-tagline">${tag}</div>
+            <div class="stock-bottom">
+                <div class="n-stat"><span class="n-lbl">Sector</span><span class="n-val" style="font-size: 0.85rem;">${item['Sector'] || '-'}</span></div>
+                <div class="n-stat" style="align-items: flex-end;"><span class="n-lbl">Market Cap</span><span class="n-val highlight">${formatINR(item['Market Cap (INR)'])}</span></div>
+            </div>
+        </div>`;
+    }).join('');
+
+    DOM.grid.querySelectorAll('.stock-card').forEach(card => {
+        card.addEventListener('click', () => {
+            const symbol = decodeURIComponent(card.dataset.symbol);
+            openDrawer(symbol);
         });
     });
-
-    if (DOM.backBtn) {
-        DOM.backBtn.addEventListener('click', () => {
-            currentView = 'stages';
-            activeStageName = null;
-            renderCurrentView();
-        });
-    }
-
-    DOM.retryBtn.addEventListener('click', fetchData);
-
-    DOM.closeDrawer.addEventListener('click', closeDrawer);
-    DOM.drawer.addEventListener('click', e => {
-        if (e.target === DOM.drawer) closeDrawer();
-    });
-    document.addEventListener('keydown', e => {
-        if (e.key === 'Escape' && !DOM.drawer.classList.contains('hidden')) closeDrawer();
-    });
 }
 
-// ==========================================
-// Enhanced 3D Spatial Engine with Glass Sheen
-// ==========================================
-
-function init3DTilt() {
-    const cards = document.querySelectorAll('.card, .sector-card, .pipe-card, .chart-card');
-
-    cards.forEach(card => {
-        card.addEventListener('mousemove', (e) => {
-            if (card.classList.contains('expanded')) return;
-
-            const rect = card.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
-
-            const centerX = rect.width / 2;
-            const centerY = rect.height / 2;
-
-            const rotateX = ((y - centerY) / centerY) * -6;
-            const rotateY = ((x - centerX) / centerX) * 6;
-
-            card.style.transform = `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) scale3d(1.02, 1.02, 1.02)`;
-
-            card.style.setProperty('--mx', `${x}px`);
-            card.style.setProperty('--my', `${y}px`);
-        });
-
-        card.addEventListener('mouseleave', () => {
-            if (card.classList.contains('expanded')) return;
-            card.style.transform = `perspective(1000px) rotateX(0deg) rotateY(0deg) scale3d(1, 1, 1)`;
-            card.style.setProperty('--mx', `50%`);
-            card.style.setProperty('--my', `50%`);
-        });
-    });
+window.drillDown = function(level, key) {
+    if (level === 1) drillState.theme = key;
+    if (level === 2) drillState.stage = key;
+    if (level === 3) drillState.subStage = key;
+    drillState.level = level;
+    renderDrillDownView();
 }
 
-// ==========================================
-// p5.js Ambient Nexus Background
-// ==========================================
+// LEVEL 4: DETAIL DRAWER
+window.openDrawer = function(symbol) {
+    const item = activeData.find(i => i['Stock Symbol'] === symbol) || activeData[0];
+    if(!item) return;
+    
+    document.getElementById('drawerName').textContent = item['Company Name'];
+    document.getElementById('drawerSymbol').textContent = item['Stock Symbol'] || 'N/A';
+    document.getElementById('drawerCap').textContent = formatINR(item['Market Cap (INR)']);
+    
+    // Detail-Level Data Fields
+    const fields = ['Business Model', 'Value Chain Direction', 'Revenue Dependency Mapping (%)', 'Asset Type', 'Geographical Exposure', 'Customer Type'];
+    document.getElementById('drawerMetaGrid').innerHTML = fields.map(f => `
+        <div class="meta-item">
+            <span class="meta-label">${f.replace('Mapping (%)', '(%)')}</span>
+            <span class="meta-value">${item[f] || '-'}</span>
+        </div>
+    `).join('');
 
-let particles = [];
+    const createList = (str) => { 
+        if (!str || !str.trim()) return `<p class="empty-read">Data unavailable.</p>`; 
+        return `<ul class="smart-list">${str.split(',').map(i => `<li>${i.trim()}</li>`).join('')}</ul>`; 
+    };
 
-function setup() {
-    let canvas = createCanvas(windowWidth, windowHeight);
-    canvas.parent('p5-canvas-container');
+    document.getElementById('drawerProducts').innerHTML = createList(item['Specific Products']);
+    document.getElementById('drawerServices').innerHTML = createList(item['Specific Services']);
+    document.getElementById('drawerCapacity').textContent = item['Operational Capacity'] || 'Data unavailable.';
 
-    const particleCount = windowWidth < 768 ? 40 : 80;
-    for (let i = 0; i < particleCount; i++) {
-        particles.push(new Particle());
-    }
-}
-
-function draw() {
-    clear(); 
-
-    for (let i = 0; i < particles.length; i++) {
-        particles[i].update();
-        particles[i].display();
-        particles[i].checkConnections(particles);
-    }
-}
-
-function windowResized() {
-    resizeCanvas(windowWidth, windowHeight);
-}
-
-class Particle {
-    constructor() {
-        this.pos = createVector(random(width), random(height));
-        this.vel = createVector(random(-0.3, 0.3), random(-0.3, 0.3));
-        this.size = random(1.5, 4);
-    }
-
-    update() {
-        this.pos.add(this.vel);
-
-        if (this.pos.x < 0 || this.pos.x > width) this.vel.x *= -1;
-        if (this.pos.y < 0 || this.pos.y > height) this.vel.y *= -1;
-
-        let mouseDist = dist(mouseX, mouseY, this.pos.x, this.pos.y);
-        if (mouseDist < 150) {
-            let pushVector = createVector(this.pos.x - mouseX, this.pos.y - mouseY);
-            pushVector.setMag(0.5);
-            this.pos.add(pushVector);
+    // Tags (if existing in HTML)
+    const tagsDiv = document.getElementById('drawerTags');
+    if (tagsDiv) {
+        tagsDiv.innerHTML = '';
+        if (item['Search Tags / Aliases']) {
+            item['Search Tags / Aliases'].split(',').forEach(t => { 
+                if(t.trim()) tagsDiv.innerHTML += `<span class="tag-pill">${t.trim()}</span>`; 
+            });
+        } else {
+            tagsDiv.innerHTML = '<span class="empty-read">No aliases bound.</span>';
         }
     }
 
-    display() {
-        noStroke();
-        fill('rgba(168, 85, 247, 0.4)'); // Purple Nodes
-        circle(this.pos.x, this.pos.y, this.size);
-    }
+    DOM.drawer.classList.remove('hidden');
+};
 
-    checkConnections(particles) {
-        particles.forEach(particle => {
-            const d = dist(this.pos.x, this.pos.y, particle.pos.x, particle.pos.y);
-            if (d < 140) {
-                const alpha = map(d, 0, 140, 0.15, 0);
-                stroke(`rgba(192, 132, 252, ${alpha})`); // Connecting lines
-                strokeWeight(1);
-                line(this.pos.x, this.pos.y, particle.pos.x, particle.pos.y);
+// 3D Tilt for Nodes & Cards
+function init3DTilt() {
+    document.querySelectorAll('.node-card, .stock-card').forEach(card => {
+        if (card.dataset.tiltInit === 'true') return;
+        card.dataset.tiltInit = 'true';
+
+        card.addEventListener('mousemove', (e) => {
+            const rect = card.getBoundingClientRect();
+            const x = e.clientX - rect.left; const y = e.clientY - rect.top;
+            const rotateX = ((y - rect.height/2) / (rect.height/2)) * -6 * tiltScale;
+            const rotateY = ((x - rect.width/2) / (rect.width/2)) * 6 * tiltScale;
+            const scale = 1 + (0.02 * tiltScale);
+            card.style.transform = `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) scale3d(${scale}, ${scale}, ${scale})`;
+            card.style.setProperty('--mx', `${x}px`); card.style.setProperty('--my', `${y}px`);
+        });
+
+        card.addEventListener('mouseleave', () => {
+            card.style.transform = `perspective(1000px) rotateX(0deg) rotateY(0deg) scale3d(1, 1, 1)`;
+        });
+    });
+}
+
+// p5.js Galaxy Background
+let particles = [];
+function setup() {
+    let cvs = createCanvas(windowWidth, windowHeight);
+    cvs.parent('p5-canvas-container');
+    for (let i = 0; i < (windowWidth < 768 ? 40 : 80); i++) particles.push(new Particle());
+}
+function draw() { clear(); particles.forEach(p => { p.update(); p.display(); p.check(particles); }); }
+function windowResized() { resizeCanvas(windowWidth, windowHeight); }
+
+class Particle {
+    constructor() { this.pos = createVector(random(width), random(height)); this.vel = createVector(random(-0.15, 0.15), random(-0.15, 0.15)); this.z = random([0.2, 0.6, 1.2]); }
+    update() {
+        this.pos.add(this.vel);
+        if (this.pos.x < -100) this.pos.x = width + 100; if (this.pos.x > width + 100) this.pos.x = -100;
+        if (this.pos.y < -100) this.pos.y = height + 100; if (this.pos.y > height + 100) this.pos.y = -100;
+    }
+    display() { 
+        noStroke(); fill(`rgba(168, 85, 247, ${0.15 + (this.z * 0.3)})`);
+        circle(this.pos.x - (mouseX - width/2)*(this.z*0.05), this.pos.y - (mouseY - height/2)*(this.z*0.05), 2 * this.z * 1.5); 
+    }
+    check(others) {
+        others.forEach(o => {
+            if (this.z === o.z) {
+                let px1 = this.pos.x - (mouseX - width/2)*(this.z*0.05), py1 = this.pos.y - (mouseY - height/2)*(this.z*0.05);
+                let px2 = o.pos.x - (mouseX - width/2)*(o.z*0.05), py2 = o.pos.y - (mouseY - height/2)*(o.z*0.05);
+                let d = dist(px1, py1, px2, py2), max = 100 * this.z; 
+                if (d < max) { stroke(`rgba(192, 132, 252, ${map(d, 0, max, 0.2 * this.z, 0)})`); strokeWeight(0.5 * this.z); line(px1, py1, px2, py2); }
             }
         });
     }
 }
 
-// Spark ignition
 document.addEventListener('DOMContentLoaded', init);

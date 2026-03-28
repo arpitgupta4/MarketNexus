@@ -3,166 +3,84 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MarketNexus - Institutional Intelligence</title>
+    <title>MarketNexus | Value Chain Explorer</title>
     
     <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
-    
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
     
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+    <div class="ambient-orb"></div>
     <div id="p5-canvas-container"></div>
     
     <header class="navbar">
-        <div class="logo">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
-                <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
-                <line x1="12" y1="22.08" x2="12" y2="12"></line>
-            </svg>
-            <span>MarketNexus</span>
+        <div class="logo-group">
+            <button id="sidebarToggle" class="sidebar-toggle" aria-label="Toggle Sidebar">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+            </button>
+            <div class="logo" id="brandLogo" title="Reset Intelligence Engine">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+                <span>MarketNexus</span>
+            </div>
         </div>
         
         <div class="search-container">
-            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="11" cy="11" r="8"></circle>
-                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-            </svg>
-            <input type="text" id="searchInput" placeholder="Deep Search: tags, aliases, specific products, services, or companies...">
-        </div>
-        
-        <div class="user-actions">
-            <div class="avatar"></div>
+            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <input type="text" id="searchInput" placeholder="Explore Themes: 'defence', 'EV', 'banking', 'aerospace'...">
         </div>
     </header>
 
     <div class="layout">
-        <aside class="sidebar">
+        <aside id="sidebar" class="sidebar">
             <div class="filter-header">
-                <h2>Discovery Engine</h2>
-                <button id="resetFilters" class="btn-text" aria-label="Reset all filters">Reset</button>
+                <h2>Advanced Filters</h2>
+                <button id="resetFilters" class="btn-text">Clear</button>
             </div>
             
             <div class="filter-group">
-                <label for="sortSelect">Sort Priority</label>
+                <label>Sort Stocks By</label>
                 <select id="sortSelect" class="dropdown">
-                    <option value="cap-desc">Market Cap (Highest to Lowest)</option>
-                    <option value="cap-asc">Market Cap (Lowest to Highest)</option>
-                    <option value="name-asc">Company Name (A-Z)</option>
-                    <option value="name-desc">Company Name (Z-A)</option>
+                    <option value="cap-desc">Market Cap (High to Low)</option>
+                    <option value="cap-asc">Market Cap (Low to High)</option>
+                    <option value="name-asc">Company (A-Z)</option>
                 </select>
             </div>
-
             <hr class="divider">
 
-            <div class="filter-group">
-                <label for="themeSelect">Parent Theme</label>
-                <select id="themeSelect" class="dropdown"><option value="All">All Themes</option></select>
-            </div>
-
-            <div class="filter-group">
-                <label for="sectorSelect">Sector</label>
-                <select id="sectorSelect" class="dropdown"><option value="All">All Sectors</option></select>
-            </div>
-
-            <div class="filter-group">
-                <label for="industrySelect">Industry</label>
-                <select id="industrySelect" class="dropdown"><option value="All">All Industries</option></select>
-            </div>
-
-            <div class="filter-group">
-                <label for="stageSelect">Supply Chain Stage</label>
-                <select id="stageSelect" class="dropdown"><option value="All">All Stages</option></select>
-            </div>
+            <div id="facetsContainer" class="facets-container"></div>
         </aside>
 
         <main class="main-content">
+            <div class="breadcrumb-nav" id="breadcrumbNav">
+                </div>
+            
             <div class="content-header">
                 <div>
-                    <h1 class="page-title">Market Universe</h1>
+                    <h1 class="page-title" id="pageTitle">Themes</h1>
                     <p id="resultCount" class="result-count">Synchronizing data stream...</p>
                 </div>
-                
-                <div class="view-controls hidden" id="viewControls">
-                    <button class="view-btn active" data-view="grid" aria-label="Grid View">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
-                        Grid
-                    </button>
-                    <button class="view-btn" data-view="pipeline" aria-label="Pipeline View">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
-                        Pipeline
-                    </button>
-                    <button class="view-btn" data-view="analytics" aria-label="Analytics View">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"></path><path d="M18 17V9"></path><path d="M13 17V5"></path><path d="M8 17v-3"></path></svg>
-                        Analytics
-                    </button>
+
+                <div class="header-actions">
+                    <button id="exportCSV" class="btn-secondary" aria-label="Export filtered results">Export CSV</button>
+                    <label class="slider-label" for="effectStrength">3D intensity</label>
+                    <input id="effectStrength" type="range" min="0" max="1" step="0.1" value="0.9" />
                 </div>
-            </div>
-            
-            <div id="breadcrumb" class="breadcrumb hidden">
-                <button id="backBtn" class="btn-back">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <line x1="19" y1="12" x2="5" y2="12"></line>
-                        <polyline points="12 19 5 12 12 5"></polyline>
-                    </svg>
-                    Back to Stages
-                </button>
-                <h2 id="activeSectorTitle" class="active-sector-title">Stage Name</h2>
             </div>
             
             <div id="loader" class="loader-container">
                 <div class="spinner"></div>
-                <h2>Assembling Market Intelligence...</h2>
-            </div>
-            
-            <div id="errorState" class="state-container hidden">
-                <div class="icon">⚠️</div>
-                <h2>Connection Error</h2>
-                <p>Could not connect to the API endpoint pipeline.</p>
-                <button id="retryBtn" class="btn-secondary">Retry Connection</button>
+                <h2>Mapping Value Chains...</h2>
             </div>
             
             <div id="noResults" class="state-container hidden">
                 <div class="icon">🔍</div>
                 <h2>No intelligence found</h2>
-                <p>Try refining your deep search terms or relaxing the sidebar constraints.</p>
+                <p>Try adjusting your search terms or clearing your filters.</p>
             </div>
 
             <div id="grid" class="grid hidden"></div>
-            
-            <div id="pipeline" class="pipeline hidden"></div>
-
-            <div id="analytics" class="analytics hidden">
-                <div class="chart-grid">
-                    <div class="chart-card" id="cardSectorCap">
-                        <div class="chart-header">
-                            <h3>Market Cap Weighting by Sector</h3>
-                            <button class="btn-expand" onclick="toggleChart('cardSectorCap')" aria-label="Expand Chart">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>
-                            </button>
-                        </div>
-                        <div class="chart-wrapper">
-                            <canvas id="chartSectorCap"></canvas>
-                        </div>
-                    </div>
-                    
-                    <div class="chart-card" id="cardStageCount">
-                        <div class="chart-header">
-                            <h3>Asset Distribution across Supply Chain</h3>
-                            <button class="btn-expand" onclick="toggleChart('cardStageCount')" aria-label="Expand Chart">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>
-                            </button>
-                        </div>
-                        <div class="chart-wrapper">
-                            <canvas id="chartStageCount"></canvas>
-                        </div>
-                    </div>
-                </div>
-            </div>
         </main>
     </div>
 
@@ -170,17 +88,17 @@
         <aside id="detailDrawer" class="drawer">
             <div class="drawer-header">
                 <div class="drawer-title-group">
-                    <span id="drawerSymbol" class="drawer-ticker"></span>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span class="pulse-dot"></span>
+                        <span id="drawerSymbol" class="drawer-ticker"></span>
+                    </div>
                     <h2 id="drawerName"></h2>
                 </div>
                 <button id="closeDrawer" class="drawer-close" aria-label="Close details">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="18" y1="6" x2="6" y2="18"></line>
-                        <line x1="6" y1="6" x2="18" y2="18"></line>
-                    </svg>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                 </button>
             </div>
-
+            
             <div class="drawer-body">
                 <div class="drawer-hero">
                     <div class="hero-metric">
@@ -188,22 +106,9 @@
                         <span id="drawerCap" class="hero-value"></span>
                     </div>
                 </div>
-
-                <div class="drawer-meta">
-                    <div class="meta-item">
-                        <span class="meta-label">Sector</span>
-                        <span id="drawerSector" class="meta-value"></span>
-                    </div>
-                    <div class="meta-item">
-                        <span class="meta-label">Industry</span>
-                        <span id="drawerIndustry" class="meta-value"></span>
-                    </div>
-                    <div class="meta-item">
-                        <span class="meta-label">Stage</span>
-                        <span id="drawerStage" class="meta-value"></span>
-                    </div>
-                </div>
-
+                
+                <div class="drawer-meta" id="drawerMetaGrid"></div>
+                
                 <div class="drawer-prose">
                     <div class="prose-section">
                         <h3>Specific Products</h3>
