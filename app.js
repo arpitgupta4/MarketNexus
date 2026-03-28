@@ -11,25 +11,15 @@ const STAGE_ORDER = [
 ];
 
 const VC_ORDER = [
-    "Downstream",
-    "Midstream / Downstream",
-    "Midstream",
-    "Upstream / Downstream",
-    "Upstream",
-    "Integrated",
-    "Diversified",
-    "Uncategorized"
+    "Downstream", "Midstream / Downstream", "Midstream", 
+    "Upstream / Downstream", "Upstream", "Integrated", 
+    "Diversified", "Uncategorized"
 ];
 
 let tiltScale = 0.9;
 let currentViewMode = 'grid'; 
 
-let drillState = {
-    level: 0, 
-    theme: null,
-    stage: null,
-    subStage: null
-};
+let drillState = { level: 0, theme: null, stage: null, subStage: null };
 
 class ExplorerEngine {
     constructor() {
@@ -72,10 +62,7 @@ class ExplorerEngine {
                     item['Sub-Stage'], item['Specific Products'], item['Specific Services']
                 ].join(" ").toLowerCase();
 
-                const matchesAll = tokens.every(token => searchString.includes(token));
-                if (matchesAll) {
-                    results.push(item);
-                }
+                if (tokens.every(token => searchString.includes(token))) results.push(item);
             } else {
                 results.push(item);
             }
@@ -96,10 +83,7 @@ class ExplorerEngine {
         let dominantTheme = 'Uncategorized';
         let maxCount = 0;
         for (const [theme, count] of Object.entries(themeCounts)) {
-            if (count > maxCount) {
-                maxCount = count;
-                dominantTheme = theme;
-            }
+            if (count > maxCount) { maxCount = count; dominantTheme = theme; }
         }
 
         return { level: 1, theme: dominantTheme, stage: null, subStage: null };
@@ -127,7 +111,6 @@ let activeData = [];
 
 const DOM = {
     search: document.getElementById('searchInput'),
-    sort: document.getElementById('sortSelect'),
     grid: document.getElementById('grid'),
     pipeline: document.getElementById('pipeline'),
     facetsContainer: document.getElementById('facetsContainer'),
@@ -152,6 +135,9 @@ function init() {
             Engine.loadData(res.data.filter(i => i['Company Name']));
             executePipeline();
             DOM.loader.classList.add('hidden');
+            
+            // LOG THE INITIAL PAGE LOAD TO HISTORY
+            pushCustomHistory(); 
         },
         error: () => {
             DOM.loader.classList.add('hidden');
@@ -166,12 +152,11 @@ function init() {
         executePipeline();
     });
     
-    DOM.sort.addEventListener('change', () => renderDrillDownView()); 
     document.getElementById('resetFilters').addEventListener('click', resetAllFeatures);
     DOM.brandLogo.addEventListener('click', resetAllFeatures);
-
     DOM.sidebarToggle.addEventListener('click', () => DOM.sidebar.classList.toggle('collapsed'));
     document.getElementById('closeDrawer').addEventListener('click', () => DOM.drawer.classList.add('hidden'));
+    
 
     DOM.viewBtns.forEach(btn => {
         btn.addEventListener('click', (e) => {
@@ -186,9 +171,8 @@ function init() {
 function resetAllFeatures() {
     Object.keys(Engine.activeFilters).forEach(k => Engine.activeFilters[k].clear());
     DOM.search.value = '';
-    DOM.sort.value = 'cap-desc';
+
     drillState = { level: 0, theme: null, stage: null, subStage: null };
-    
     currentViewMode = 'grid';
     DOM.viewBtns.forEach(b => {
         if (b.dataset.view === 'grid') b.classList.add('active');
@@ -196,6 +180,7 @@ function resetAllFeatures() {
     });
 
     executePipeline();
+    pushCustomHistory(); // Log the reset as a new history state
 }
 
 function executePipeline() {
@@ -219,6 +204,7 @@ function executePipeline() {
     }
 }
 
+// ======== MODERN DROPDOWN RENDERER ========
 function renderSidebar(facets) {
     DOM.facetsContainer.innerHTML = '';
     for (const [category, counts] of Object.entries(facets)) {
@@ -229,30 +215,71 @@ function renderSidebar(facets) {
         
         const currentSet = Engine.activeFilters[category];
         const currentVal = currentSet.size > 0 ? Array.from(currentSet)[0] : 'All';
+        let displayValText = `All ${category}s`;
 
-        let optionsHTML = `<option value="All">All ${category}s</option>`;
+        let optionsHTML = `<div class="select-option ${currentVal === 'All' ? 'selected' : ''}" data-value="All">All ${category}s</div>`;
         
         Object.entries(counts).sort((a,b) => b[1]-a[1]).forEach(([val, count]) => {
-            const isSelected = val === currentVal ? 'selected' : '';
-            optionsHTML += `<option value="${val}" ${isSelected}>${val} (${count})</option>`;
+            const isSelected = val === currentVal;
+            if (isSelected) displayValText = `${val}`;
+            optionsHTML += `<div class="select-option ${isSelected ? 'selected' : ''}" data-value="${val}">${val} <span class="opt-count">${count}</span></div>`;
         });
 
-        sec.innerHTML = `<label>${category}</label><select class="dropdown dynamic-select" data-cat="${category}">${optionsHTML}</select>`;
+        sec.innerHTML = `
+            <label>${category}</label>
+            <div class="custom-select-wrapper dynamic-filter" data-cat="${category}">
+                <div class="select-trigger">
+                    <span class="trigger-text">${displayValText}</span>
+                    <svg class="chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </div>
+                <div class="select-options-container">
+                    ${optionsHTML}
+                </div>
+            </div>
+        `;
         DOM.facetsContainer.appendChild(sec);
     }
 
-    DOM.facetsContainer.querySelectorAll('.dynamic-select').forEach(select => {
-        select.addEventListener('change', (e) => {
-            const cat = e.target.dataset.cat;
-            const val = e.target.value;
-            Engine.activeFilters[cat].clear();
-            if (val !== 'All') Engine.activeFilters[cat].add(val);
-            
-            activeData = Engine.getFilteredData(DOM.search.value.trim());
-            renderDrillDownView();
+    attachDynamicFilterListeners();
+}
+
+// ======== DROPDOWN EVENT LISTENERS ========
+function attachDynamicFilterListeners() {
+    const dynamicWrappers = document.querySelectorAll('.dynamic-filter');
+    
+    dynamicWrappers.forEach(wrapper => {
+        const trigger = wrapper.querySelector('.select-trigger');
+        trigger.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const wasOpen = wrapper.classList.contains('open');
+            document.querySelectorAll('.custom-select-wrapper').forEach(w => w.classList.remove('open'));
+            if (!wasOpen) wrapper.classList.add('open');
+        });
+
+        wrapper.querySelectorAll('.select-option').forEach(opt => {
+            opt.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const cat = wrapper.dataset.cat;
+                const val = e.currentTarget.dataset.value;
+                
+                Engine.activeFilters[cat].clear();
+                if (val !== 'All') Engine.activeFilters[cat].add(val);
+                
+                wrapper.classList.remove('open');
+                activeData = Engine.getFilteredData(DOM.search.value.trim());
+                renderDrillDownView();
+                
+                pushCustomHistory(); // Log the filter application
+            });
         });
     });
 }
+
+// Global click listener to close dropdowns if you click off them
+document.addEventListener('click', () => {
+    document.querySelectorAll('.custom-select-wrapper').forEach(w => w.classList.remove('open'));
+});
+
 
 function formatINR(number) {
     const val = Number(String(number || "0").replace(/[^0-9.-]+/g, ""));
@@ -281,8 +308,6 @@ function renderDrillDownView() {
         else if (drillState.level === 2) renderLevel2_SubStages();
         else if (drillState.level === 3) renderLevel3_Stocks();
     }
-    
-    setTimeout(init3DTilt, 100);
 }
 
 function renderBreadcrumbs() {
@@ -308,6 +333,7 @@ window.goToLevel = function(level) {
         else b.classList.remove('active');
     });
 
+    pushCustomHistory(); // LOG BREADCRUMB NAVIGATION
     renderDrillDownView();
 }
 
@@ -362,8 +388,6 @@ function renderPipelineOverview() {
     });
 
     let orderedCols = Object.keys(pipelineMap);
-    
-    // Helper to clean strings for accurate matching
     const cleanStr = (v) => String(v || '').toLowerCase().replace(/\s+/g, ' ').trim();
 
     if (colField === 'Supply Chain Stage') {
@@ -381,7 +405,6 @@ function renderPipelineOverview() {
             return idxA - idxB;
         });
     } else if (colField === 'Sub-Stage') {
-        // NEW LOGIC: Sort Sub-Stage columns by the Value Chain Direction of their items
         const getColRank = (colKey) => {
             let minRank = 999;
             if (Array.isArray(pipelineMap[colKey].items)) {
@@ -396,15 +419,10 @@ function renderPipelineOverview() {
         orderedCols.sort((a, b) => {
             let rankA = getColRank(a);
             let rankB = getColRank(b);
-            
-            // Primary Sort: Value Chain Direction (Upstream -> Downstream)
             if (rankA !== rankB) return rankA - rankB;
-            
-            // Secondary Sort: Fallback to Market Cap if they share the same VC rank
             return pipelineMap[b].cap - pipelineMap[a].cap; 
         });
     } else {
-        // Fallback for Parent Themes
         orderedCols.sort((a,b) => pipelineMap[b].cap - pipelineMap[a].cap);
     }
 
@@ -433,13 +451,7 @@ function renderPipelineOverview() {
                 </div>`;
             }).join('');
         } else if (cardType === 'stock') {
-            const sortVal = DOM.sort.value;
-            const stocks = colData.items.sort((a,b) => {
-                if (sortVal === 'cap-desc') return b._cap - a._cap;
-                if (sortVal === 'cap-asc') return a._cap - b._cap;
-                if (sortVal === 'name-asc') return String(a['Company Name']).localeCompare(String(b['Company Name']));
-                return b._cap - a._cap;
-            });
+            const stocks = colData.items.sort((a,b) => b._cap - a._cap); // Default to Cap Descending
             
             cardsHtml = stocks.map(item => `
                 <div class="pipe-card" data-model="${item['Business Model'] || 'General'}" onclick="window.openDrawerByIndex(${Engine.rawData.indexOf(item)})">
@@ -482,9 +494,10 @@ window.goToPipelineLevel = function(level, themeEncoded=null, stageEncoded=null,
     if(subStageEncoded) drillState.subStage = decodeURIComponent(subStageEncoded);
     
     currentViewMode = 'pipeline';
+    
+    pushCustomHistory(); // LOG PIPELINE NAVIGATION
     renderDrillDownView();
 }
-
 
 // ======== GRID VIEWS ========
 function renderLevel0_Themes() {
@@ -510,10 +523,12 @@ function renderLevel0_Themes() {
     }).join('');
 }
 
+// ======== UPDATE 1: Level 1 (Stages) ========
 function renderLevel1_Stages() {
     DOM.pageTitle.textContent = "Supply Chain Stages";
     const subset = activeData.filter(i => String(i['Parent Theme'] || 'Uncategorized').trim() === drillState.theme);
     const grouped = {};
+    
     subset.forEach(item => {
         const key = String(item['Supply Chain Stage'] || 'Uncategorized').trim();
         if (!grouped[key]) grouped[key] = { count: 0, cap: 0 };
@@ -524,17 +539,15 @@ function renderLevel1_Stages() {
     DOM.resultCount.textContent = `Analyzing ${subset.length} assets across ${Object.keys(grouped).length} stages in ${drillState.theme}.`;
 
     DOM.grid.innerHTML = Object.entries(grouped).sort((a,b) => {
-        const clean = (v) => String(v || '').toLowerCase().replace(/\s+/g, ' ').trim();
-        let idxA = VC_ORDER.findIndex(v => clean(v) === clean(a[0]));
-        let idxB = VC_ORDER.findIndex(v => clean(v) === clean(b[0]));
+        let idxA = STAGE_ORDER.indexOf(a[0]);
+        let idxB = STAGE_ORDER.indexOf(b[0]);
         
         if (idxA === -1) idxA = 999;
         if (idxB === -1) idxB = 999;
         
         if (idxA !== idxB) return idxA - idxB;
-        return b[1].cap - a[1].cap; // Fallback to Market Cap if they share the same stage
+        return b[1].cap - a[1].cap; 
     }).map(([key, data], idx) => {
-
         return `
         <div class="node-card" onclick="gridDrillDown(2, '${encodeURIComponent(key)}')" style="animation-delay: ${idx * 0.05}s">
             <h3 class="node-title">${key}</h3>
@@ -546,19 +559,40 @@ function renderLevel1_Stages() {
     }).join('');
 }
 
+// ======== UPDATE 2: Level 2 (Sub-Stages) ========
 function renderLevel2_SubStages() {
     DOM.pageTitle.textContent = "Sub-Stage Analysis";
     const subset = activeData.filter(i => String(i['Parent Theme'] || 'Uncategorized').trim() === drillState.theme && String(i['Supply Chain Stage'] || 'Uncategorized').trim() === drillState.stage);
     const grouped = {};
+    
     subset.forEach(item => {
         const key = String(item['Sub-Stage'] || 'Core Processing').trim();
-        if (!grouped[key]) grouped[key] = { count: 0, cap: 0 };
+        if (!grouped[key]) grouped[key] = { count: 0, cap: 0, items: [] };
         grouped[key].count++;
         grouped[key].cap += item._cap;
+        grouped[key].items.push(item);
     });
 
+    const cleanStr = (v) => String(v || '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+    const getRank = (items) => {
+        let minRank = 999;
+        items.forEach(item => {
+            let rank = VC_ORDER.findIndex(v => cleanStr(v) === cleanStr(item['Value Chain Direction']));
+            if (rank !== -1 && rank < minRank) minRank = rank;
+        });
+        return minRank;
+    };
+
     DOM.resultCount.textContent = `Analyzing ${subset.length} assets in ${drillState.stage}.`;
-    DOM.grid.innerHTML = Object.entries(grouped).sort((a,b) => b[1].cap - a[1].cap).map(([key, data], idx) => {
+    
+    DOM.grid.innerHTML = Object.entries(grouped).sort((a,b) => {
+        let rankA = getRank(a[1].items);
+        let rankB = getRank(b[1].items);
+
+        if (rankA !== rankB) return rankA - rankB;
+        return b[1].cap - a[1].cap; 
+    }).map(([key, data], idx) => {
         return `
         <div class="node-card" onclick="gridDrillDown(3, '${encodeURIComponent(key)}')" style="animation-delay: ${idx * 0.05}s">
             <h3 class="node-title">${key}</h3>
@@ -579,13 +613,7 @@ function renderLevel3_Stocks() {
         String(i['Sub-Stage'] || 'Core Processing').trim() === drillState.subStage
     );
 
-    const sortVal = DOM.sort.value;
-    subset.sort((a, b) => {
-        if (sortVal === 'cap-desc') return b._cap - a._cap;
-        if (sortVal === 'cap-asc') return a._cap - b._cap;
-        if (sortVal === 'name-asc') return String(a['Company Name']).localeCompare(String(b['Company Name']));
-        return b._cap - a._cap;
-    });
+    subset.sort((a, b) => b._cap - a._cap); // Default to Cap Descending
 
     DOM.resultCount.textContent = `Showing ${subset.length} companies operating in ${drillState.subStage}.`;
 
@@ -621,11 +649,11 @@ window.gridDrillDown = function(level, encodedKey) {
         else b.classList.remove('active');
     });
 
+    pushCustomHistory(); // LOG GRID NAVIGATION
     renderDrillDownView();
 }
 
-// ======== LEVEL 4: DETAIL DRAWER (FIXED) ========
-
+// ======== LEVEL 4: DETAIL DRAWER ========
 window.openDrawerByIndex = function(index) {
     const item = Engine.rawData[index];
     if (!item) return;
@@ -637,7 +665,6 @@ window.openDrawerByIndex = function(index) {
     const fields = ['Business Model', 'Value Chain Direction', 'Revenue Dependency Mapping (%)', 'Asset Type', 'Geographical Exposure', 'Customer Type'];
     document.getElementById('drawerMetaGrid').innerHTML = fields.map(f => {
         let displayValue = item[f] || '-';
-        // FIX: Remove pipe '|' and start new line for each mapped item
         if (f === 'Revenue Dependency Mapping (%)' && displayValue.includes('|')) {
             displayValue = displayValue.split('|').map(str => `<span style="display: block; padding-top: 4px;">${str.trim()}</span>`).join('');
         }
@@ -672,17 +699,82 @@ window.openDrawerByIndex = function(index) {
     DOM.drawer.classList.remove('hidden');
 };
 
-function init3DTilt() {
+// ======== CUSTOM TRACKPAD HISTORY ENGINE ========
+let customHistory = [];
+let historyIdx = -1;
+let swipeCooldown = false;
+
+function pushCustomHistory() {
+    // If the user went back, and then clicked a new card, delete the old "forward" history
+    if (historyIdx < customHistory.length - 1) {
+        customHistory = customHistory.slice(0, historyIdx + 1);
     }
     
+    // Save a snapshot of where we are right now
+    customHistory.push({
+        drillState: JSON.parse(JSON.stringify(drillState)),
+        viewMode: currentViewMode
+    });
+    historyIdx++;
+}
 
-// p5.js Enhanced Constellation Background
+function navigateCustomHistory(direction) {
+    if (direction === -1 && historyIdx > 0) {
+        historyIdx--; // Go Back
+    } else if (direction === 1 && historyIdx < customHistory.length - 1) {
+        historyIdx++; // Go Forward
+    } else {
+        return; // Do nothing if at the start or end of the history
+    }
+
+    // Restore the state from our internal history array
+    const state = customHistory[historyIdx];
+    drillState = JSON.parse(JSON.stringify(state.drillState));
+    currentViewMode = state.viewMode;
+    
+    // Sync the UI buttons
+    DOM.viewBtns.forEach(b => {
+        if (b.dataset.view === currentViewMode) b.classList.add('active');
+        else b.classList.remove('active');
+    });
+    
+    DOM.drawer.classList.add('hidden'); // Close drawer if open
+    renderDrillDownView();              // Redraw the screen
+}
+
+// Listen for Trackpad Swipes
+window.addEventListener('wheel', (e) => {
+    // CRITICAL: Ignore swipes if the user is hovering over the Pipeline or Sidebar.
+    // We want them to be able to scroll those horizontally without accidentally changing pages!
+    if (e.target.closest('.pipeline') || e.target.closest('.sidebar') || e.target.closest('.drawer')) return;
+
+    // Detect a strong horizontal swipe (deltaX is horizontal movement)
+    if (Math.abs(e.deltaX) > 40 && Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+        if (swipeCooldown) return; // Prevent 1 swipe from triggering 5 page turns
+
+        if (e.deltaX < 0) {
+            navigateCustomHistory(-1); // Swiped Right (Go Back)
+            triggerSwipeCooldown();
+        } else if (e.deltaX > 0) {
+            navigateCustomHistory(1);  // Swiped Left (Go Forward)
+            triggerSwipeCooldown();
+        }
+    }
+});
+
+function triggerSwipeCooldown() {
+    swipeCooldown = true;
+    setTimeout(() => { swipeCooldown = false; }, 600); // Lock navigation for 600ms per swipe
+}
+
+// ======== p5.js Enhanced Constellation Background ========
 let particles = [];
 function setup() {
     let cvs = createCanvas(windowWidth, windowHeight);
     cvs.parent('p5-canvas-container');
-    // Dramatically increase particle count
-    let pCount = windowWidth < 768 ? 50 : 150; 
+    
+    // Drastically increased the particle count for a much denser starfield
+    let pCount = windowWidth < 768 ? 100 : 350; 
     for (let i = 0; i < pCount; i++) particles.push(new Particle());
 }
 
@@ -696,15 +788,18 @@ function windowResized() { resizeCanvas(windowWidth, windowHeight); }
 class Particle {
     constructor() { 
         this.pos = createVector(random(width), random(height)); 
-        // Use random2D to give them true random directions, slightly faster
-        this.vel = p5.Vector.random2D().mult(random(0.1, 0.4)); 
-        this.baseSize = random(1.5, 3.5); 
+        // Slowed down the movement slightly for a more majestic, deep-space feel
+        this.vel = p5.Vector.random2D().mult(random(0.05, 0.25)); 
+        this.baseSize = random(1.0, 4.0); 
         this.offset = random(1000); 
+        
+        // NEW LOGIC: Only larger stars act as "nodes" that draw constellation lines.
+        // This gives you distinct constellations floating over a deep field of unconnected stars.
+        this.isNode = this.baseSize > 2.4; 
     }
     
     update() {
         this.pos.add(this.vel);
-        // Wrap around screen edges smoothly
         if (this.pos.x < -50) this.pos.x = width + 50; 
         if (this.pos.x > width + 50) this.pos.x = -50;
         if (this.pos.y < -50) this.pos.y = height + 50; 
@@ -713,22 +808,29 @@ class Particle {
     
     display() { 
         noStroke(); 
-        // Twinkling effect
         let pulse = sin(frameCount * 0.02 + this.offset) * 0.5 + 0.5; 
-        let alpha = 0.15 + (pulse * 0.35);
+        
+        // Constellation nodes glow brighter; deep background stars stay fainter
+        let maxAlpha = this.isNode ? 0.7 : 0.3;
+        let alpha = 0.1 + (pulse * maxAlpha);
+        
         fill(`rgba(168, 85, 247, ${alpha})`);
         circle(this.pos.x, this.pos.y, this.baseSize); 
     }
     
     check(others) {
+        // If this is just a deep background star, don't shoot lines from it
+        if (!this.isNode) return;
+
         others.forEach(o => {
-            if (this !== o) {
+            // Only connect nodes to other nodes to create clear "constellations"
+            if (this !== o && o.isNode) {
                 let d = dist(this.pos.x, this.pos.y, o.pos.x, o.pos.y);
-                let max = 120; // Distance at which they connect
+                let max = 170; // Increased reach distance for longer constellation lines
                 if (d < max) { 
-                    // Fade lines out as they get further apart
-                    stroke(`rgba(168, 85, 247, ${map(d, 0, max, 0.25, 0)})`); 
-                    strokeWeight(0.5); 
+                    // Lines fade out beautifully as the stars drift apart
+                    stroke(`rgba(168, 85, 247, ${map(d, 0, max, 0.4, 0)})`); 
+                    strokeWeight(0.6); 
                     line(this.pos.x, this.pos.y, o.pos.x, o.pos.y); 
                 }
             }
