@@ -28,7 +28,7 @@
         
         <div class="search-container">
             <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-            <input type="text" id="searchInput" placeholder="Explore Themes: 'defence', 'EV', 'banking', 'aerospace'...">
+            <input type="text" id="searchInput" placeholder="Explore Themes: 'defence', 'EV' or Deep Search: 'drones', 'radar'...">
         </div>
     </header>
 
@@ -54,7 +54,8 @@
 
         <main class="main-content">
             <div class="breadcrumb-nav" id="breadcrumbNav">
-                </div>
+                <span class="crumb active" data-level="0">Market Universe</span>
+            </div>
             
             <div class="content-header">
                 <div>
@@ -63,9 +64,16 @@
                 </div>
 
                 <div class="header-actions">
-                    <button id="exportCSV" class="btn-secondary" aria-label="Export filtered results">Export CSV</button>
-                    <label class="slider-label" for="effectStrength">3D intensity</label>
-                    <input id="effectStrength" type="range" min="0" max="1" step="0.1" value="0.9" />
+                    <div class="view-toggle" id="viewControls">
+                        <button class="view-btn active" data-view="grid">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                            Grid
+                        </button>
+                        <button class="view-btn" data-view="pipeline">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+                            Pipeline
+                        </button>
+                    </div>
                 </div>
             </div>
             
@@ -81,6 +89,7 @@
             </div>
 
             <div id="grid" class="grid hidden"></div>
+            <div id="pipeline" class="pipeline hidden"></div>
         </main>
     </div>
 
