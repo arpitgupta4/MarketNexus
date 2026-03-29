@@ -1,5 +1,5 @@
 /* * MarketNexus - Value Chain Explorer
- * Features: High-Performance Simple Search, Clean State Routing, Pre-Computed Aggregations.
+ * Features: High-Performance Simple Search, Clean State Routing, Pre-Computed Aggregations, Mobile UX.
  */
 
 const API_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRqVXr4sXzLjAkI3Y-EranuAYbVJKAmgdEebtnaaUOx1czymzNVf8liZOu4KwJFPDBJYHcKU1MBg0oT/pub?gid=236349063&single=true&output=csv';
@@ -152,6 +152,14 @@ const DOM = {
 };
 
 function init() {
+    // Auto-collapse sidebar on load for mobile devices
+    if (window.innerWidth <= 900) {
+        DOM.sidebar.classList.add('collapsed');
+    }
+
+    // Initialize the swipe-to-close gesture
+    setupMobileDrawerSwipe();
+
     DOM.grid.classList.remove('hidden');
 
     Papa.parse(API_URL, {
@@ -176,6 +184,14 @@ function init() {
         executePipeline();
         pushCustomHistory(); 
     }, 250));
+    
+    // Close mobile keyboard on "Enter" press
+    DOM.search.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault(); // Prevents any weird default mobile behaviors
+            DOM.search.blur();  // This is the magic command that hides the keyboard!
+        }
+    });
     
     document.getElementById('resetFilters').addEventListener('click', resetAllFeatures);
     DOM.brandLogo.addEventListener('click', resetAllFeatures);
@@ -301,13 +317,33 @@ function attachDynamicFilterListeners() {
                 renderDrillDownView();
                 
                 pushCustomHistory(); 
+
+                // Auto-close the sidebar on mobile so they can see results
+                if (window.innerWidth <= 900) {
+                    DOM.sidebar.classList.add('collapsed');
+                }
             });
         });
     });
 }
 
-document.addEventListener('click', () => {
+document.addEventListener('click', (e) => {
+    // 1. Close custom dropdowns if clicking anywhere outside them
     document.querySelectorAll('.custom-select-wrapper').forEach(w => w.classList.remove('open'));
+
+    // 2. Close sidebar on mobile if clicking outside of it
+    if (window.innerWidth <= 900) {
+        const sidebar = DOM.sidebar;
+        const toggleBtn = DOM.sidebarToggle;
+        
+        // If the sidebar is open AND the click wasn't on the sidebar AND wasn't on the toggle button
+        if (!sidebar.classList.contains('collapsed') && 
+            !sidebar.contains(e.target) && 
+            !toggleBtn.contains(e.target)) {
+            
+            sidebar.classList.add('collapsed');
+        }
+    }
 });
 
 function formatINR(number) {
@@ -787,13 +823,80 @@ function triggerSwipeCooldown() {
     setTimeout(() => { swipeCooldown = false; }, 600); 
 }
 
+// ======== NATIVE MOBILE SWIPE-TO-CLOSE ========
+function setupMobileDrawerSwipe() {
+    const drawerEl = document.getElementById('detailDrawer');
+    if (!drawerEl) return; // Null safety check
+
+    let startY = 0;
+    let currentY = 0;
+    let isDragging = false;
+
+    drawerEl.addEventListener('touchstart', (e) => {
+        // Only apply on mobile devices
+        if (window.innerWidth > 768) return;
+        
+        // Only allow dragging if the user is at the very top of the drawer's content
+        if (drawerEl.scrollTop <= 0) {
+            startY = e.touches[0].clientY;
+            isDragging = true;
+            drawerEl.style.transition = 'none'; // Remove CSS transition for a 1:1 finger drag feel
+        }
+    }, { passive: true });
+
+    drawerEl.addEventListener('touchmove', (e) => {
+        if (!isDragging) return;
+        
+        currentY = e.touches[0].clientY;
+        const deltaY = currentY - startY;
+
+        // If dragging downwards
+        if (deltaY > 0) {
+            if (e.cancelable) e.preventDefault(); // Prevents the browser's native "pull-to-refresh"
+            drawerEl.style.transform = `translateY(${deltaY}px)`;
+        }
+    }, { passive: false });
+
+    drawerEl.addEventListener('touchend', () => {
+        if (!isDragging) return;
+        isDragging = false;
+        
+        drawerEl.style.transition = ''; // Restore the smooth CSS animation
+        
+        const deltaY = currentY - startY;
+        
+        // If they dragged it down more than 120 pixels, snap it closed
+        if (deltaY > 120) {
+            DOM.drawer.classList.add('hidden');
+            
+            // Clean up the inline transform after the close animation finishes
+            setTimeout(() => { drawerEl.style.transform = ''; }, 400);
+        } else {
+            // Otherwise, snap it back to the top
+            drawerEl.style.transform = '';
+        }
+        
+        // Reset variables for the next swipe
+        startY = 0;
+        currentY = 0;
+    });
+}
+
 // ======== p5.js Enhanced Constellation Background ========
 let particles = [];
 function setup() {
     let cvs = createCanvas(windowWidth, windowHeight);
     cvs.parent('p5-canvas-container');
-    let pCount = windowWidth < 768 ? 100 : 350; 
-    for (let i = 0; i < pCount; i++) particles.push(new Particle());
+    
+    // Optimization: Limit framerate and particle count severely on mobile to save battery
+    if (windowWidth < 768) {
+        frameRate(30);
+        let pCount = 30; 
+        for (let i = 0; i < pCount; i++) particles.push(new Particle());
+    } else {
+        let pCount = 350; 
+        for (let i = 0; i < pCount; i++) particles.push(new Particle());
+    }
 }
 
 function draw() { 
