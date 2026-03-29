@@ -2,8 +2,8 @@
  * Features: High-Performance Simple Search, Clean State Routing, Pre-Computed Aggregations, Mobile UX.
  */
 
-const API_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRqVXr4sXzLjAkI3Y-EranuAYbVJKAmgdEebtnaaUOx1czymzNVf8liZOu4KwJFPDBJYHcKU1MBg0oT/pub?gid=236349063&single=true&output=csv';
-
+// Replace your hardcoded const API_URL with this:
+const API_URL = window.CONFIG ? window.CONFIG.API_URL : '';
 const STAGE_ORDER = [
     "Raw Material Extraction", "Processing & Refining", "Component Manufacturing",
     "Assembly / OEM", "Software & Integration", "Distribution & Logistics",
