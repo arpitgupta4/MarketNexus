@@ -3,7 +3,9 @@
  */
 
 // Replace your hardcoded const API_URL with this:
-const API_URL = window.CONFIG ? window.CONFIG.API_URL : '';
+// Change this line in your app.js:
+const API_URL = '/api/get-data'; 
+
 const STAGE_ORDER = [
     "Raw Material Extraction", "Processing & Refining", "Component Manufacturing",
     "Assembly / OEM", "Software & Integration", "Distribution & Logistics",
@@ -163,18 +165,20 @@ function init() {
     DOM.grid.classList.remove('hidden');
 
     Papa.parse(API_URL, {
-        download: true, header: true, skipEmptyLines: true,
+        download: true,
+        header: true,
+        skipEmptyLines: true,
         complete: (res) => {
-            Engine.loadData(res.data.filter(i => i['Company Name']));
+            // Filter out empty rows and load into Engine
+            Engine.loadData(res.data.filter(i => i['Company Name'])); 
             executePipeline();
             DOM.loader.classList.add('hidden');
-            pushCustomHistory(); 
+            pushCustomHistory();
         },
-        error: () => {
+        error: (err) => {
+            console.error("API Fetch Error:", err);
             DOM.loader.classList.add('hidden');
             DOM.noResults.classList.remove('hidden');
-            DOM.noResults.querySelector('h2').textContent = 'Failed to load data';
-            DOM.noResults.querySelector('p').textContent = 'Please check your network or CSV sheet URL.';
         }
     });
 
