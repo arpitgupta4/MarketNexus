@@ -2,9 +2,7 @@
  * Features: High-Performance Simple Search, Clean State Routing, Pre-Computed Aggregations, Mobile UX.
  */
 
-// Replace your hardcoded const API_URL with this:
-// Change this line in your app.js:
-const API_URL = '/api/get-data'; 
+const API_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRqVXr4sXzLjAkI3Y-EranuAYbVJKAmgdEebtnaaUOx1czymzNVf8liZOu4KwJFPDBJYHcKU1MBg0oT/pub?gid=236349063&single=true&output=csv';
 
 const STAGE_ORDER = [
     "Raw Material Extraction", "Processing & Refining", "Component Manufacturing",
@@ -165,20 +163,18 @@ function init() {
     DOM.grid.classList.remove('hidden');
 
     Papa.parse(API_URL, {
-        download: true,
-        header: true,
-        skipEmptyLines: true,
+        download: true, header: true, skipEmptyLines: true,
         complete: (res) => {
-            // Filter out empty rows and load into Engine
-            Engine.loadData(res.data.filter(i => i['Company Name'])); 
+            Engine.loadData(res.data.filter(i => i['Company Name']));
             executePipeline();
             DOM.loader.classList.add('hidden');
-            pushCustomHistory();
+            pushCustomHistory(); 
         },
-        error: (err) => {
-            console.error("API Fetch Error:", err);
+        error: () => {
             DOM.loader.classList.add('hidden');
             DOM.noResults.classList.remove('hidden');
+            DOM.noResults.querySelector('h2').textContent = 'Failed to load data';
+            DOM.noResults.querySelector('p').textContent = 'Please check your network or CSV sheet URL.';
         }
     });
 
@@ -257,6 +253,7 @@ function executePipeline() {
 }
 
 // ======== MODERN DROPDOWN RENDERER ========
+// ======== MODERN DROPDOWN RENDERER ========
 function renderSidebar(facets) {
     DOM.facetsContainer.innerHTML = '';
     for (const [category, counts] of Object.entries(facets)) {
@@ -267,9 +264,13 @@ function renderSidebar(facets) {
         
         const currentSet = Engine.activeFilters[category];
         const currentVal = currentSet.size > 0 ? Array.from(currentSet)[0] : 'All';
-        let displayValText = `All ${category}s`;
+        
+        // NEW: Smart pluralization to fix "Industrys" -> "Industries"
+        const pluralCategory = category === 'Industry' ? 'Industries' : `${category}s`;
+        
+        let displayValText = `All ${pluralCategory}`;
 
-        let optionsHTML = `<div class="select-option ${currentVal === 'All' ? 'selected' : ''}" data-value="All">All ${category}s</div>`;
+        let optionsHTML = `<div class="select-option ${currentVal === 'All' ? 'selected' : ''}" data-value="All">All ${pluralCategory}</div>`;
         
         Object.entries(counts).sort((a,b) => b[1]-a[1]).forEach(([val, count]) => {
             const isSelected = val === currentVal;
@@ -353,7 +354,15 @@ document.addEventListener('click', (e) => {
 function formatINR(number) {
     const val = Number(String(number || "0").replace(/[^0-9.-]+/g, ""));
     if (!val) return 'N/A';
-    if (val >= 10000000) return `₹ ${(val / 10000000).toLocaleString('en-IN', { maximumFractionDigits: 2 })} Cr`;
+
+    // If it's a massive number (greater than 1,000 Cr), drop the decimals for readability
+    if (val >= 10000000) {
+        const crValue = val / 10000000;
+        if (crValue > 1000) {
+            return `₹ ${crValue.toLocaleString('en-IN', { maximumFractionDigits: 0 })} Cr`;
+        }
+        return `₹ ${crValue.toLocaleString('en-IN', { maximumFractionDigits: 2 })} Cr`;
+    }
     return `₹ ${val.toLocaleString('en-IN')}`;
 }
 
@@ -892,14 +901,25 @@ function setup() {
     let cvs = createCanvas(windowWidth, windowHeight);
     cvs.parent('p5-canvas-container');
     
-    // Optimization: Limit framerate and particle count severely on mobile to save battery
-    if (windowWidth < 768) {
-        frameRate(30);
-        let pCount = 30; 
-        for (let i = 0; i < pCount; i++) particles.push(new Particle());
-    } else {
-        let pCount = 350; 
-        for (let i = 0; i < pCount; i++) particles.push(new Particle());
+    let pCount = windowWidth < 768 ? 30 : 350; 
+    if (windowWidth < 768) frameRate(30); // Save mobile battery
+
+    // Distribute particles evenly using a invisible grid layout
+    let cols = Math.ceil(Math.sqrt(pCount * (windowWidth / windowHeight)));
+    let rows = Math.ceil(pCount / cols);
+    let cellW = windowWidth / cols;
+    let cellH = windowHeight / rows;
+
+    let count = 0;
+    for (let i = 0; i < cols; i++) {
+        for (let j = 0; j < rows; j++) {
+            if (count >= pCount) break;
+            // Place one particle inside this grid cell, with some random jitter
+            let startX = (i * cellW) + random(cellW);
+            let startY = (j * cellH) + random(cellH);
+            particles.push(new Particle(startX, startY));
+            count++;
+        }
     }
 }
 
@@ -914,14 +934,23 @@ function draw() {
 }
 
 function windowResized() { resizeCanvas(windowWidth, windowHeight); }
-
 class Particle {
-    constructor() { 
-        this.pos = createVector(random(width), random(height)); 
-        this.vel = p5.Vector.random2D().mult(random(0.05, 0.25)); 
-        this.baseSize = random(1.0, 4.0); 
+    constructor(startX, startY) { 
+        this.pos = createVector(startX, startY); 
         this.offset = random(1000); 
-        this.isNode = this.baseSize > 2.4; 
+        
+        // NEW LOGIC: Only 25% of particles become connecting Nodes. The rest are Stars.
+        this.isNode = random() > 0.75; 
+        
+        if (this.isNode) {
+            // Nodes are larger and move a bit faster
+            this.baseSize = random(2.5, 4.5); 
+            this.vel = p5.Vector.random2D().mult(random(0.08, 0.25)); 
+        } else {
+            // Stars are tiny and drift very slowly in the deep background
+            this.baseSize = random(0.8, 2.0); 
+            this.vel = p5.Vector.random2D().mult(random(0.01, 0.05)); 
+        }
     }
     
     update() {
@@ -934,26 +963,38 @@ class Particle {
     
     display() { 
         noStroke(); 
-        let pulse = sin(frameCount * 0.02 + this.offset) * 0.5 + 0.5; 
-        let maxAlpha = this.isNode ? 0.7 : 0.3;
-        let alpha = 0.1 + (pulse * maxAlpha);
+        // Stars twinkle twice as fast as nodes pulse
+        let pulseSpeed = this.isNode ? 0.02 : 0.04;
+        let pulse = sin(frameCount * pulseSpeed + this.offset) * 0.5 + 0.5; 
         
-        fill(`rgba(168, 85, 247, ${alpha})`);
+        let maxAlpha = this.isNode ? 0.85 : 0.60; 
+        let minAlpha = this.isNode ? 0.25 : 0.05; // Stars can fade out much more
+        
+        let alpha = minAlpha + (pulse * (maxAlpha - minAlpha));
+        
+        // Add a slight white core to the tiny stars to make them pop
+        if (!this.isNode && pulse > 0.8) {
+            fill(`rgba(255, 255, 255, ${alpha})`);
+        } else {
+            fill(`rgba(168, 85, 247, ${alpha})`);
+        }
+        
         circle(this.pos.x, this.pos.y, this.baseSize); 
     }
     
-    // Optimization: Only check stars forward in the array to prevent drawing duplicate lines
     check(others, myIndex) {
+        // Stars do not draw lines, only nodes do
         if (!this.isNode) return;
 
         for (let j = myIndex + 1; j < others.length; j++) {
             let o = others[j];
+            // Only draw lines between two nodes
             if (o.isNode) {
                 let d = dist(this.pos.x, this.pos.y, o.pos.x, o.pos.y);
-                let max = 170; 
+                let max = 180; // Slightly increased reach so the fewer nodes still connect
                 if (d < max) { 
-                    stroke(`rgba(168, 85, 247, ${map(d, 0, max, 0.4, 0)})`); 
-                    strokeWeight(0.6); 
+                    stroke(`rgba(168, 85, 247, ${map(d, 0, max, 0.65, 0)})`); 
+                    strokeWeight(0.7); 
                     line(this.pos.x, this.pos.y, o.pos.x, o.pos.y); 
                 }
             }
