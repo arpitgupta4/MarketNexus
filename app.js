@@ -159,24 +159,49 @@ function init() {
 
     // Initialize the swipe-to-close gesture
     setupMobileDrawerSwipe();
-
     DOM.grid.classList.remove('hidden');
 
-    Papa.parse(API_URL, {
-        download: true, header: true, skipEmptyLines: true,
-        complete: (res) => {
-            Engine.loadData(res.data.filter(i => i['Company Name']));
-            executePipeline();
-            DOM.loader.classList.add('hidden');
-            pushCustomHistory(); 
-        },
-        error: () => {
-            DOM.loader.classList.add('hidden');
-            DOM.noResults.classList.remove('hidden');
-            DOM.noResults.querySelector('h2').textContent = 'Failed to load data';
-            DOM.noResults.querySelector('p').textContent = 'Please check your network or CSV sheet URL.';
-        }
-    });
+    // ======== PERFORMANCE UPGRADE: CACHING & WORKERS ========
+    const CACHE_KEY = 'marketnexus_data_v1';
+    const cachedData = sessionStorage.getItem(CACHE_KEY);
+
+    // If data is already in the browser's memory, load it instantly (0ms network delay)
+    if (cachedData) {
+        console.log("Loading data from Session Cache (Instant)");
+        Engine.loadData(JSON.parse(cachedData));
+        executePipeline();
+        DOM.loader.classList.add('hidden');
+        pushCustomHistory();
+    } else {
+        // Otherwise, fetch from the network (Google Sheets or your API)
+        Papa.parse(API_URL, {
+            download: true, 
+            header: true, 
+            skipEmptyLines: true,
+            worker: true, // OPTIMIZATION: Parses data in a background thread to prevent UI freezing
+            complete: (res) => {
+                const cleanData = res.data.filter(i => i['Company Name']);
+                
+                // Save the cleaned data to browser memory for lightning-fast page reloads
+                try {
+                    sessionStorage.setItem(CACHE_KEY, JSON.stringify(cleanData));
+                } catch(e) {
+                    console.warn("Local storage full, skipping cache.");
+                }
+
+                Engine.loadData(cleanData);
+                executePipeline();
+                DOM.loader.classList.add('hidden');
+                pushCustomHistory(); 
+            },
+            error: () => {
+                DOM.loader.classList.add('hidden');
+                DOM.noResults.classList.remove('hidden');
+                DOM.noResults.querySelector('h2').textContent = 'Failed to load data';
+                DOM.noResults.querySelector('p').textContent = 'Please check your network or CSV sheet URL.';
+            }
+        });
+    }
 
     // Debounced search logic for better performance
     DOM.search.addEventListener('input', debounce(() => {
@@ -188,8 +213,8 @@ function init() {
     // Close mobile keyboard on "Enter" press
     DOM.search.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
-            e.preventDefault(); // Prevents any weird default mobile behaviors
-            DOM.search.blur();  // This is the magic command that hides the keyboard!
+            e.preventDefault(); 
+            DOM.search.blur();  
         }
     });
     
